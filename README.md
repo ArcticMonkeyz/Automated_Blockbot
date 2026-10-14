@@ -1,3 +1,7 @@
+# RockBlockBot v4.0.1 - Build hotfix
+
+Fix Kotlin compile errors in `detectVerticalStrip` (use `core.first()` and `core.last()` on a `List<Int>`). No placement or detector logic changed. Added a test-only `tests/CompileRecognitionSmoke.sh` check and bumped Android version to `0.4.0.1` (code 23). Android full build needs GitHub Actions.
+
 # RockBlockBot v4.0 — vertical recognition and measured placement presets
 
 - Added vertical strip geometry check using physical tile width and lane coverage to prevent five-high strips being interpreted as six. Ambiguous six-high readings without reliable seams are rejected.

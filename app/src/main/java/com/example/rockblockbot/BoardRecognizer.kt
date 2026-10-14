@@ -366,7 +366,7 @@ object BoardRecognizer {
         val pitch = boxH.toDouble() / count
         if (pitch !in 29.0..49.0 || abs(pitch - thickness) > thickness * .16) return null
         val lanePixels = IntArray(count)
-        for (y in 0 until boxH) for (x in core.first..core.last) {
+        for (y in 0 until boxH) for (x in core.first()..core.last()) {
             if (matches(image.getPixel(zone.left + minX + x, zone.top + minY + y), color)) {
                 lanePixels[(y / pitch).toInt().coerceIn(0, count - 1)]++
             }
@@ -374,7 +374,7 @@ object BoardRecognizer {
         if (lanePixels.any { it < thickness * pitch * .35 }) return null
         val rows = List(count) { "#" }
         return ObservedPiece(rows,
-            (zone.left + minX + (core.first + core.last) / 2f),
+            (zone.left + minX + (core.first() + core.last()) / 2f),
             (zone.top + minY + boxH - pitch / 2f).toFloat(),
             count - 1, 0, pitch.roundToInt(),
             (lanePixels.sum().toDouble() / pixelCount).coerceIn(0.0, 1.0),

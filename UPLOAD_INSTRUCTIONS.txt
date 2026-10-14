@@ -1,9 +1,11 @@
-Rock Block Bot v3.9
-===================
-1. Extract ZIP and open its RockBlockBot-v3.9 folder.
-2. Open your current clone via GitHub Desktop > Repository > Show in Explorer.
-3. Copy all contents of the extracted folder into that clone and replace matching files.
-4. Do not delete .git or .github. Keep the existing .github/workflows/build-apk.yml.
-5. GitHub Desktop > commit "v3.9 per-piece calibration" > Push origin.
-6. GitHub Actions > Build Debug APK > install the resulting APK.
-7. Single-app capture; preview all detected pieces; verify one move at a time.
+RockBlockBot v4.0.1 - Kotlin compile hotfix
+
+1. Extract RockBlockBot-v4.0.1-build-hotfix.zip.
+2. In GitHub Desktop, open your existing repo (Repository > Show in Explorer).
+3. Copy the CONTENTS of the extracted RockBlockBot-v4.0.1 folder into the repo,
+   replacing matching files. Do not delete .git or .github.
+4. Commit 'v4.0.1 fix BoardRecognizer compile' and Push origin.
+5. Open the GitHub Actions 'Build debug APK' run. Install the APK only after it succeeds.
+
+This corrects .first/.last calls on a Kotlin List and updates the app version.
+The existing solver, movement calibration, and recognition logic are unchanged.
