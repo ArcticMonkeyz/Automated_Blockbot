@@ -324,6 +324,11 @@ class CaptureService : Service() {
             setStatus("Resume requires a recent stable board with exactly 1 or 2 visible pieces.")
             return
         }
+        if (frame.missingVisiblePiece) {
+            setStatus("RESUME BLOCKED: Colored blocks are still visible in an unrecognized tray slot. " +
+                "All visible pieces must be recognized. STOP and send the report.")
+            return
+        }
         moveCount = 3 - frame.recognized
         setStatus("PARTIAL TRAY: ${frame.recognized} detected; resume enabled for this session. " +
             "Confirm that ONLY ${frame.recognized} pieces really remain in the tray. " +
@@ -337,6 +342,11 @@ class CaptureService : Service() {
         moveButton?.isEnabled = false
         val frame = latest
         val expectedPieces = 3 - (moveCount % 3)
+        if (frame?.missingVisiblePiece == true) {
+            setStatus("PREVIEW BLOCKED: At least one colored tray piece was not recognized. " +
+                "Do NOT use RESUME to skip it. STOP and send the report.")
+            return
+        }
         if (frame == null || frame.recognized != expectedPieces || stableCount < 2 ||
             SystemClock.elapsedRealtime() - latestAt > 4000L || frame.width >= frame.height) {
             setStatus("Need a stable portrait game board with $expectedPieces/$expectedPieces " +

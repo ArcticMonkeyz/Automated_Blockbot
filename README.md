@@ -1,20 +1,35 @@
-# Rock Block Bot v3.2 — compact controls
+# Rock Block Bot v3.3 — missing-piece recognition and safe RESUME
 
-This is v3.1.1 with the floating controls moved to the very top of the usable Android window and reduced in height. The previous controls partially covered the first row of the game board, so their location was a possible source of interference with board recognition.
+Fixes based on the game screenshot and game report showing 3 tray pieces physically visible but only 2/3 recognized in v3.2.
 
-## Changes from v3.1.1
+## Diagnosis
 
-- Main PREVIEW / NEXT MOVE / STOP row remains visible at the top.
-- RESUME 1/2 is preserved as a shorter button.
-- X/Y adjustment buttons are hidden behind **SHOW X/Y**, with current offsets always visible. Tap SHOW X/Y to adjust, HIDE X/Y to collapse.
-- Position is now `gravity=TOP|START, x=4, y=0` (previously x=8, y=45). Shape/status text is smaller and limited to three lines to stay above the board.
-- Saved calibration, recognizer, solver, accessibility drag timing, and the existing green-L-specific correction are unchanged.
-- The provided blue zigzag screenshots show a preview/drag mismatch, but both were captured while the display said **Moving one piece**. Do not infer a settled outcome or modify blue-piece calibration until the post-release report is available. Do not press another NEXT MOVE after an UNVERIFIED result.
+Screenshot: Piece 1 is the red `###/..#` 4-cell piece; Piece 2 is a green `###/#..` 4-cell piece; Piece 3 is the yellow horizontal `##` 2-cell piece. Previous report showed Piece 1 NOT RECOGNIZED, so ordinary PREVIEW required all 3 and did nothing. The RESUME 1/2 button bypassed that requirement and planned using only two detected shapes. That would be unsafe for survival planning.
 
-## Install / test
+## Changes
 
-Replace the matching files in your existing GitHub Desktop working tree; preserve `.git` and `.github`. Commit and push to use the existing GitHub Actions APK build. Install the new APK; enable overlay and accessibility services as necessary. Select **Share a single app → Rock Block Saga**.
+- Better multi-cell grid ranking: refuse low-precision dense pseudo-grid fits, favor pitches consistent with the measured piece bounds, and modestly relax the fallback threshold for otherwise well-fit irregular shapes.
+- Independent colored-pixel presence check for each tray slot. A physically visible but unrecognized piece cannot be treated as an empty/used slot via RESUME.
+- The report distinguishes `NOT RECOGNIZED (colored piece still visible)` from `NOT RECOGNIZED (empty/uncertain)`.
+- Full three-piece PREVIEW still requires 3 accurately identified shapes. RESUME is only for genuine partial trays (one or two physically remaining pieces).
+- Unchanged: compact floating controls, X/Y calibration, known green-L shape correction, solver heuristics, gesture timing, manual confirmation, and post-placement verification.
 
-Check that floating controls stay above the board. Tap PREVIEW to inspect all four blue-piece cells, then NEXT MOVE only if shape and preview are right. On any unverified move, STOP and send the **Last placement check** report. Keep the X=84, Y=484 saved offsets unchanged for now.
+## Test results and limits
 
-**Testing limits:** Kotlin calibration source test and structural checks only. An actual Android APK build and in-game placement must be validated via GitHub Actions and device.
+Offline Kotlin screenshot tests on provided 709×1536 screenshot `1000010905.png`:
+- Piece 1: `###/..#`, 4 cells
+- Piece 2: `###/#..`, 4 cells
+- Piece 3: `##`, 2 cells
+- Board: 6 occupied squares
+
+Additional screenshots correctly identified horizontal 4, vertical 4/5, purple 4-cell zigzag, and horizontal 2. Comparison against 58 historical screenshots found no other changed shape footprints aside from removal of a low-confidence dense false fit; some unrecognized pieces remain deliberately unrecognized.
+
+**Caveat:** The previous detector reads the red shape from the posted PNG but did not read the red shape in the on-device MediaProjection report. The revised detector is more tolerant, but this is NOT yet proof that the device capture difference is fixed. If the red piece still fails, STOP and send the newest report; do not use RESUME to bypass it.
+
+No complete Android APK build was run locally; build through existing GitHub Actions workflow and verify with a screenshot before dragging.
+
+## Install
+
+Extract ZIP; copy contents into the existing GitHub Desktop clone, replacing matching files; keep `.git` and `.github`. Commit and Push origin. Wait for Build Debug APK action to succeed, then install APK.
+
+Open Rock Block Saga through Android `Share a single app` capture. Leave existing X=84, Y=484 calibration unchanged. Tap PREVIEW and check the three pieces and all green preview cells. Do not use RESUME with three visible pieces. Do not use NEXT MOVE until the preview is correct.

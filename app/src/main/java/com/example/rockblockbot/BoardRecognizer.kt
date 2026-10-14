@@ -32,7 +32,11 @@ object BoardRecognizer {
     }
 
     data class Frame(val board: Long, val pieces: List<ObservedPiece?>,
-                     val width: Int, val height: Int) {
+                     val width: Int, val height: Int,
+                     val trayEvidence: List<Boolean> = List(3) { false }) {
+        val missingVisiblePiece: Boolean get() = pieces.indices.any { i ->
+            pieces[i] == null && trayEvidence.getOrElse(i) { false }
+        }
         val recognized get() = pieces.count { it != null }
         val signature get() = board.toString() + ":" +
             pieces.joinToString("|") { it?.signature ?: "?" }
@@ -48,7 +52,8 @@ object BoardRecognizer {
                     "${it.signature} (${it.count} blocks, pitch ${it.pitch}, " +
                     "fit ${"%.2f".format(java.util.Locale.US, it.fit)}, " +
                     "stripes ${it.stripesX}x${it.stripesY}, direct geometry)"
-                } ?: "NOT RECOGNIZED")
+                } ?: if (trayEvidence.getOrElse(i) { false })
+                    "NOT RECOGNIZED (colored piece still visible)" else "NOT RECOGNIZED (empty/uncertain)")
             }.joinToString("\n")
     }
 
@@ -83,6 +88,25 @@ object BoardRecognizer {
     // x=115 and cut off the first tile of five-wide pieces near x=90.
     private val zones=listOf(Zone(75,275),Zone(275,440),Zone(440,685))
     private val knownFootprints by lazy { ShapeLibrary.patterns.toSet() }
+
+    /** Independent colored-object test for each tray slot. Recognition may
+     * reject a valid piece because a seam is obscured; that must never be
+     * treated as an empty slot by RESUME. This tests colored pixels, NOT
+     * whether a library footprint matches or a piece shape was solved.
+     */
+    private fun trayHasPieceEvidence(image: Bitmap, zone: Zone): Boolean {
+        var hits = 0
+        for (y in 1080 until 1295 step 3) for (x in zone.left until zone.right step 3) {
+            val p = image.getPixel(x, y)
+            if (matches(p, TileColor.RED) || matches(p, TileColor.GREEN) ||
+                matches(p, TileColor.PURPLE) || matches(p, TileColor.YELLOW) ||
+                matches(p, TileColor.BLUE)) {
+                hits++
+                if (hits >= 75) return true
+            }
+        }
+        return false
+    }
 
     /** Long strong-color bands separated by dark tile seams. */
     private fun bands(profile: IntArray): List<IntRange> {
@@ -407,11 +431,19 @@ object BoardRecognizer {
             val recall=covered.toDouble()/pixelCount
             val precision=covered.toDouble()/area.coerceAtLeast(1)
             val f1=2*recall*precision/(recall+precision).coerceAtLeast(0.00001)
+            // A small candidate pitch can subdivide a real tile into two
+            // phantom blocks. For example a 3x2 L at ~40px pitch can be
+            // incorrectly explained as a 4x3 9-block rectangle at 30px.
+            // Require high cell-area precision before accepting dense grids.
+            if (n >= 7 && (precision < 0.84 || recall < 0.84)) continue
+            if (n <= 6 && (precision < 0.70 || recall < 0.76)) continue
             val pattern=trimmed.joinToString("/")
             val known=pattern in knownFootprints
             // The piece library is a weak tie-breaker, not a whitelist: some
             // observed shapes are missing from the extracted 41 footprints.
-            val score=f1+
+            val geometryPenalty = 0.15 * abs(cols*pitch-boxW).toDouble()/boxW +
+                0.03 * abs(rows*pitch-boxH).toDouble()/boxH
+            val score=f1-geometryPenalty+
                 (if(rows==1) seamBonus(image,zone,minX,minY,boxW,boxH,pitch,cols) else 0.0)
             val firstRow=detected.indexOfFirst { '#' in it }
             val gripRow=trimmed.indexOfLast { '#' in it }
@@ -424,7 +456,7 @@ object BoardRecognizer {
         val chosen=best ?: return null
         // Reject explanations that omit a substantial part of the colored
         // mask. Three detected blocks cannot explain four real blocks.
-        if(chosen.recall<0.86 || chosen.score<0.80) return null
+        if(chosen.recall<0.80 || chosen.score<0.77) return null
         // Any confident straight strip was already handled by the independent
         // color-core detector above; the fallback handles irregular pieces.
         return ObservedPiece(chosen.rows,chosen.gripX,chosen.gripY,
@@ -465,7 +497,9 @@ object BoardRecognizer {
                 if(fraction(image,163+c*55,454+r*55,14)>.55)
                     board=board or (1L shl (r*8+c))
             }
-            return Frame(board,zones.map { detectPiece(image,it) },bitmap.width,bitmap.height)
+            val pieces = zones.map { detectPiece(image,it) }
+            val evidence = zones.map { trayHasPieceEvidence(image,it) }
+            return Frame(board,pieces,bitmap.width,bitmap.height,evidence)
         } finally { if(image!==bitmap) image.recycle() }
     }
 }

@@ -1,0 +1,8 @@
+Rock Block Bot v3.3 host-JVM recognizer smoke tests (not Android APK test)
+1000010905.png: Board 6; red ###/..# (4); green ###/#.. (4); yellow ## (2)
+1000010866.png: yellow ###/#.. (4); purple #./##/.# (4); green #### (4)
+1000010843.png: horizontal green #### (4); vertical purple #/#/#/#/# (5); green ###/#.. (4)
+1000010813.png: vertical red #/#/#/#/# (5); vertical blue #/#/#/# (4); purple ##/## (4)
+1000010900.png: only visible tray slot 3 blue #./##/.# recognized (4); other slots empty
+Compare 58 historical screenshots versus v3.2: previously falsely detected green 9-block shape corrected to 4-block; no other altered shapes except one low-confidence dense eight-cell fit rejected.
+On-device MediaProjection recognition and Android compilation not verified locally.
