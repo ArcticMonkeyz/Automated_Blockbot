@@ -50,6 +50,8 @@ class CaptureService : Service() {
     // v3.7, GLOBAL Y remains active and changing it always moves the endpoint.
     private var tallDelta = PlacementGeometry.DEFAULT_TALL_DELTA_PX
     private var coordsLabel: TextView? = null
+    private var shapeCalibrationLabel: TextView? = null
+    private var shapeCalibrationRow: LinearLayout? = null
     private var lastTouchPath = "No gesture dispatched yet."
     private var lastPlacementCheck = "No confirmed placement yet."
     private data class Prepared(
@@ -203,6 +205,8 @@ class CaptureService : Service() {
         val tallAdjustments = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         adjustments.addView(globalAdjustments)
         adjustments.addView(tallAdjustments)
+        shapeCalibrationRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        adjustments.addView(shapeCalibrationRow)
         val calibrationToggle = Button(this).apply {
             text = "SHOW CAL"
             textSize = 11f
@@ -227,12 +231,24 @@ class CaptureService : Service() {
         adjustButton(globalAdjustments, "Y +") { adjust(0, 20) }
         adjustButton(tallAdjustments, "TALL Y -") { adjustTall(-20) }
         adjustButton(tallAdjustments, "TALL Y +") { adjustTall(20) }
+        shapeCalibrationRow?.let { row ->
+            adjustButton(row, "PIECE X-") { adjustPiece(-20,0) }
+            adjustButton(row, "PIECE X+") { adjustPiece(20,0) }
+            adjustButton(row, "PIECE Y-") { adjustPiece(0,-20) }
+            adjustButton(row, "PIECE Y+") { adjustPiece(0,20) }
+        }
         panel.addView(adjustments)
         offsetLabel = TextView(this).apply {
             setTextColor(0xFFFFFFFF.toInt())
             textSize = 12f
         }
         panel.addView(offsetLabel)
+        shapeCalibrationLabel = TextView(this).apply {
+            setTextColor(0xFFB7F6CF.toInt())
+            textSize = 11f
+            text = "Per-piece calibration becomes available after PREVIEW."
+        }
+        panel.addView(shapeCalibrationLabel)
         shapeLabel = TextView(this).apply {
             setTextColor(0xFFFFFFFF.toInt())
             textSize = 12f
@@ -276,6 +292,7 @@ class CaptureService : Service() {
         getSharedPreferences("calibration",MODE_PRIVATE).edit()
             .putInt("x",xOffset).putInt("y",yOffset).apply()
         updateOffsetLabel()
+        prepared = prepared?.copy(time=SystemClock.elapsedRealtime())
         updateMarker()
         setStatus("Offsets updated. PREVIEW is visual only; NEXT MOVE performs one confirmed drag.")
     }
@@ -287,8 +304,33 @@ class CaptureService : Service() {
         getSharedPreferences("calibration",MODE_PRIVATE).edit()
             .putInt("tallDeltaV38",tallDelta).apply()
         updateOffsetLabel()
+        prepared = prepared?.copy(time=SystemClock.elapsedRealtime())
         updateMarker()
         setStatus("Tall Y adjusted. Both global Y and tall delta affect tall-piece release; check red marker.")
+    }
+
+    private fun pieceAdjustment(observed: BoardRecognizer.ObservedPiece): PieceCalibration.Adjustment {
+        val prefix = PieceCalibration.key(observed.signature,observed.tileColor)
+        val prefs = getSharedPreferences("piece_calibration",MODE_PRIVATE)
+        return PieceCalibration.Adjustment(prefs.getInt("${prefix}_x",0),prefs.getInt("${prefix}_y",0))
+    }
+
+    private fun adjustPiece(dx: Int, dy: Int) {
+        val plan = prepared ?: run {
+            setStatus("PREVIEW a piece before adjusting its individual calibration.")
+            return
+        }
+        if (inProgress || sessionBlocked || preparing) return
+        val id = PieceCalibration.key(plan.observed.signature, plan.observed.tileColor)
+        val new = PieceCalibration.changed(pieceAdjustment(plan.observed),dx,dy)
+        getSharedPreferences("piece_calibration",MODE_PRIVATE).edit()
+            .putInt("${id}_x",new.xPx).putInt("${id}_y",new.yPx).apply()
+        // The prepared board is unchanged; refresh the preview expiration
+        // while the user is actively calibrating the release marker.
+        prepared = plan.copy(time=SystemClock.elapsedRealtime())
+        updateMarker()
+        setStatus("Saved calibration for ${plan.observed.tileColor} ${plan.observed.signature}: " +
+            "additional X=${new.xPx}px Y=${new.yPx}px. Check the red marker before NEXT MOVE.")
     }
 
     private fun screenSize(): Point = Point().also { point ->
@@ -296,24 +338,27 @@ class CaptureService : Service() {
         wm!!.defaultDisplay.getRealSize(point)
     }
 
+    private fun effectiveOffsets(plan: Prepared, screen: Point): Pair<Int,Int> {
+        val (biasCol,biasRow) = PlacementGeometry.shapeCorrectionCells(
+            plan.observed.signature,plan.observed.tileColor)
+        val personal = pieceAdjustment(plan.observed)
+        val baseY = PlacementGeometry.effectiveYOffsetPx(
+            plan.piece.height,plan.piece.width,yOffset,tallDelta,0,
+            PlacementGeometry.cellHeightPx(screen.y))
+        return PieceCalibration.effectiveX(xOffset,biasCol,
+                   PlacementGeometry.cellWidthPx(screen.x),personal) to
+               PieceCalibration.effectiveY(baseY,biasRow,
+                   PlacementGeometry.cellHeightPx(screen.y),personal)
+    }
+
     private fun gestureCoords(plan: Prepared): FloatArray {
         val screen = screenSize()
         val sx = screen.x / BoardRecognizer.REF_WIDTH
         val sy = screen.y / BoardRecognizer.REF_HEIGHT
-        // Use the same occupied tile for pickup and placement. Previously the
-        // drag began at the piece bounding-box center, which can land on the
-        // right-hand block of an irregular piece and shift its placement.
+        val (effectiveX,effectiveY) = effectiveOffsets(plan,screen)
         val fromX = plan.observed.gripX * sx
         val fromY = plan.observed.gripY * sy
-        val (biasCol, biasRow) = PlacementGeometry.shapeCorrectionCells(plan.observed.signature,plan.observed.tileColor)
-        val toX = (163f + (plan.move.col + plan.observed.gripCol)*55f) * sx +
-            xOffset + biasCol * PlacementGeometry.cellWidthPx(screen.x)
-        // Global Y always applies. For tall pieces, apply an independent
-        // relative delta (default -240px); the v3.7 hardcoded Y=0 is gone.
-        // The board-preview geometry remains untouched.
-        val effectiveY = PlacementGeometry.effectiveYOffsetPx(
-            plan.piece.height, plan.piece.width, yOffset, tallDelta, biasRow,
-            PlacementGeometry.cellHeightPx(screen.y))
+        val toX = (163f + (plan.move.col + plan.observed.gripCol)*55f) * sx + effectiveX
         val toY = (454f + (plan.move.row + plan.observed.gripRow)*55f) * sy + effectiveY
         return floatArrayOf(fromX,fromY,toX,toY)
     }
@@ -328,12 +373,10 @@ class CaptureService : Service() {
                 "Tall Y calibrated (trial). " else "") + "Check shape!"
         val screen = screenSize()
         val coords = gestureCoords(plan)
-        val (biasCol,biasRow) = PlacementGeometry.shapeCorrectionCells(
-            plan.observed.signature, plan.observed.tileColor)
-        val actualY = PlacementGeometry.effectiveYOffsetPx(
-            plan.piece.height, plan.piece.width, yOffset, tallDelta, biasRow,
-            PlacementGeometry.cellHeightPx(screen.y))
-        val actualX = xOffset + biasCol * PlacementGeometry.cellWidthPx(screen.x)
+        val (actualX,actualY) = effectiveOffsets(plan,screen)
+        val personal = pieceAdjustment(plan.observed)
+        shapeCalibrationLabel?.text = "Current ${plan.observed.tileColor} ${plan.observed.signature}: " +
+            "extra X=${personal.xPx}, Y=${personal.yPx}px (saved per shape+color)"
         coordsLabel?.text = "Finger: (${coords[0].toInt()}, ${coords[1].toInt()})" +
             " -> (${coords[2].toInt()}, ${coords[3].toInt()}) px; effective X=$actualX Y=$actualY"
         if (marker == null) {
@@ -436,7 +479,8 @@ class CaptureService : Service() {
                     setStatus("PREVIEW only: piece ${move.pieceIndex+1}, row ${move.row+1}, col ${move.col+1}. " +
                         "${piece.normalized.size} green cells = full detected shape; blue = pickup tile; red = release. " +
                         "If count/shape differs from the real piece, STOP. Calibration X=$xOffset Y=$yOffset. " +
-                        "Shape adjustment ${PlacementGeometry.shapeCorrectionCells(observed.signature,observed.tileColor)} cells. " +
+                        "Preset shape adjustment ${PlacementGeometry.shapeCorrectionCells(observed.signature,observed.tileColor)} cells; " +
+                        "personal adjustment ${pieceAdjustment(observed)}. " +
                         (if (PlacementGeometry.directTallAnchor(piece.height,piece.width))
                             "Tall-adjusted release (trial): effective Y=${yOffset+tallDelta}px before shape bias. " else ""))
                 }
@@ -485,8 +529,10 @@ class CaptureService : Service() {
         lastTouchPath = "Piece ${plan.move.pieceIndex+1} ${plan.observed.signature}: " +
             "pickup (${coords[0].toInt()},${coords[1].toInt()}) -> " +
             "release (${coords[2].toInt()},${coords[3].toInt()}) screen px, " +
-            "global X=$xOffset Y=$yOffset, tall delta=$tallDelta"
+            "global X=$xOffset Y=$yOffset, tall delta=$tallDelta, " +
+            "piece extra=${pieceAdjustment(plan.observed)}; effective=${effectiveOffsets(plan,screen)}"
         lastPlacementCheck = "PENDING: Drag started; awaiting settled post-release game frame."
+        shapeCalibrationLabel?.text = "Current move: awaiting settled frame (6-8 seconds)."
         setStatus("Testing piece ${plan.move.pieceIndex+1} at row ${plan.move.row+1}, " +
             "col ${plan.move.col+1}; endpoint (${coords[2].toInt()}, ${coords[3].toInt()}).")
         val accepted = TouchService.current?.dragWithHold(coords[0],coords[1],coords[2],coords[3]) { success,detail ->
@@ -536,56 +582,39 @@ class CaptureService : Service() {
         }
     }
 
-    /** Diagnose a pure translation after an unverified placement (no line clears).
-     *  Never silently change calibration or perform a retry.
+    /** Diagnose placements by simulating legal final boards, including clears.
+     *  The saved per-piece calibration is never silently changed by a guess.
      */
     private fun displacementReport(plan: Prepared, actual: Long): String {
-        val original = plan.frame.board
-        val predicted = plan.expected
-        val expectedAdded = predicted and original.inv()
-        val actualAdded = actual and original.inv()
-        val n = plan.piece.normalized.size
-        val expectedCount = java.lang.Long.bitCount(expectedAdded)
-        val actualCount = java.lang.Long.bitCount(actualAdded)
-        if (expectedCount != n || (original and predicted) != original) {
-            return "Predicted placement includes a line clear; inspect board manually."
+        val matches = PlacementDiagnostics.findMatches(plan.frame.board,plan.piece,
+            plan.move.row,plan.move.col,actual)
+        if (matches.size == 1) {
+            val shift = matches.single()
+            if (shift.dx==0 && shift.dy==0)
+                return "Board matched preview, but the tray or timing verification disagreed."
+            val screen = screenSize()
+            val (x,y) = effectiveOffsets(plan,screen)
+            val personal = pieceAdjustment(plan.observed)
+            val changeX = -shift.dx*PlacementGeometry.cellWidthPx(screen.x)
+            val changeY = -shift.dy*PlacementGeometry.cellHeightPx(screen.y)
+            return "Shape ${plan.observed.tileColor} ${plan.observed.signature} landed " +
+                "${shift.dx} columns, ${shift.dy} rows from preview" +
+                (if (shift.clearedLines>0) "; cleared ${shift.clearedLines} line(s)" else "") +
+                ". Effective release X=$x Y=$y. For THIS shape only, " +
+                "suggest an EXTRA calibration change X=$changeX Y=$changeY px " +
+                "(current extra X=${personal.xPx}, Y=${personal.yPx}; NOT auto-applied)."
         }
-        if (actualCount == 0 && (original and actual) == original) {
-            return "NO PLACEMENT: 0 new board cells; the piece may have snapped back " +
-                "because the release missed the snap area. Do not retry blindly."
-        }
-        if (actualCount != n || (original and actual) != original) {
-            return "Detected $actualCount new cells but expected $n. Shape or board mismatch."
-        }
-        for (dy in -3..3) for (dx in -3..3) {
-            var shifted = 0L
-            var valid = true
-            for (r in 0..7) for (c in 0..7) {
-                if ((expectedAdded and (1L shl (r*8+c))) == 0L) continue
-                val rr = r + dy; val cc = c + dx
-                if (rr !in 0..7 || cc !in 0..7) { valid = false; break }
-                shifted = shifted or (1L shl (rr*8+cc))
-            }
-            if (valid && shifted == actualAdded && (dx != 0 || dy != 0)) {
-                val screen = screenSize()
-                val (biasCol,biasRow) = PlacementGeometry.shapeCorrectionCells(plan.observed.signature,plan.observed.tileColor)
-                val effectiveX = xOffset + biasCol*PlacementGeometry.cellWidthPx(screen.x)
-                val effectiveY = PlacementGeometry.effectiveYOffsetPx(
-                    plan.piece.height,plan.piece.width,yOffset,tallDelta,biasRow,
-                    PlacementGeometry.cellHeightPx(screen.y))
-                val suggestedX = effectiveX - dx * PlacementGeometry.cellWidthPx(screen.x)
-                val suggestedY = effectiveY - dy * PlacementGeometry.cellHeightPx(screen.y)
-                return "Shape ${plan.observed.signature} landed ${dx} columns, ${dy} rows " +
-                    "from preview. Current effective X=$effectiveX Y=$effectiveY. " +
-                    "Suggested next-test effective X=$suggestedX Y=$suggestedY (not applied)."
-            }
-        }
-        return "New cells differ from preview and are not a simple translation."
+        return PlacementDiagnostics.diagnose(plan.frame.board,plan.piece,
+            plan.move.row,plan.move.col,actual)
     }
 
     private fun finish(message: String) {
         lastPlacementCheck = message
         inProgress=false
+        // Surface the verification result in the floating overlay itself.
+        shapeLabel?.text = message
+        coordsLabel?.text = "See Last placement check after STOP."
+        shapeCalibrationLabel?.text = "Per-piece calibration is saved. Tap PREVIEW before moving again."
         // Every move requires a fresh preview and explicit NEXT MOVE tap.
         moveButton?.isEnabled=false
         previewButton?.isEnabled = !sessionBlocked
@@ -601,7 +630,8 @@ class CaptureService : Service() {
         captureFrozen=false
         removeMarker()
         try { overlay?.let { wm?.removeView(it) } } catch (_: Exception) {}
-        overlay=null; moveButton=null; previewButton=null; offsetLabel=null; shapeLabel=null; coordsLabel=null; prepared=null
+        overlay=null; moveButton=null; previewButton=null; offsetLabel=null; shapeLabel=null
+        coordsLabel=null; shapeCalibrationLabel=null; shapeCalibrationRow=null; prepared=null
         reader?.setOnImageAvailableListener(null,null)
         imageThread?.quitSafely(); imageThread=null
         display?.release(); display=null

@@ -32,8 +32,19 @@ class MainActivity : Activity() {
         fun button(value: String, fn: () -> Unit) {
             layout.addView(Button(this).apply { text=value; setOnClickListener { fn() } })
         }
-        label("Rock Block Bot v3.8 — tall-piece calibration",22f)
-        label("1. Enable overlays and accessibility. 2. Start capture and choose SHARE A SINGLE APP: Rock Block Saga. 3. With three real tray pieces, press PREVIEW (not RESUME). Check the entire detected shape and all green placement cells. Blue ring = finger pickup, red crosshair = finger release. The preview lists both screen-pixel coordinates. 4. Tap NEXT MOVE only after checking the preview; wait at least seven seconds for verification. Press PREVIEW again before any other move. STOP after the result is settled and inspect Last placement check and Last touch path. 5. For calibration, SHOW CAL opens global X/Y and TALL Y buttons. Global Y now affects every piece. TALL Y controls only tall pieces and starts at -240px relative to global Y (for saved Y=484, effective tall Y starts at 244px). TALL Y + moves the finger release downward by 20px; TALL Y - moves it upward. These settings are experimental and do not guarantee exact placement. Never move a piece with an incorrect shape or incomplete preview, and never retry an unverified move blindly. No unattended play.")
+        label("Rock Block Bot v3.9 — per-piece calibration",22f)
+        label("1. Enable overlay/accessibility, then SHARE A SINGLE APP: Rock Block Saga. " +
+            "2. PREVIEW with all real tray pieces recognized, and compare the entire shape and green squares. " +
+            "3. Open SHOW CAL: global X/Y affect all pieces; TALL Y adjusts all tall pieces; " +
+            "PIECE X/Y adjusts ONLY the currently previewed shape+color. Per-piece settings are saved " +
+            "across sessions. An empirically measured correction is preloaded for the purple five-high strip, " +
+            "while the previously successful yellow L calibration is preserved. " +
+            "4. Check the blue pickup ring, red release crosshair and exact coordinates; press NEXT MOVE " +
+            "only if the shape and target are correct. Wait at least 8 seconds for VERIFIED/UNVERIFIED " +
+            "in the floating overlay. If UNVERIFIED, do not retry blindly. " +
+            "5. STOP then inspect Last placement check. Unexpected line clears can now be diagnosed " +
+            "as a piece-specific offset suggestion; suggestions are NOT applied automatically. " +
+            "Do not use RESUME if all three real pieces are visible. No unattended play.")
         button("Allow floating controls") {
             startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,Uri.parse("package:$packageName")))
         }

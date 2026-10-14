@@ -1,1 +1,9 @@
-Rock Block Bot v3.8: unzip into your cloned GitHub Desktop repository (replace matching files, keep .git and .github), commit and Push origin, then download the Debug APK artifact from your GitHub Actions workflow. Install on phone and test PREVIEW first. SHOW CAL has global X/Y and separate TALL Y +/-; global Y now affects tall pieces as well. Default tall delta -240 px. Keep confirmation and do not retry an UNVERIFIED move blindly.
+Rock Block Bot v3.9
+===================
+1. Extract ZIP and open its RockBlockBot-v3.9 folder.
+2. Open your current clone via GitHub Desktop > Repository > Show in Explorer.
+3. Copy all contents of the extracted folder into that clone and replace matching files.
+4. Do not delete .git or .github. Keep the existing .github/workflows/build-apk.yml.
+5. GitHub Desktop > commit "v3.9 per-piece calibration" > Push origin.
+6. GitHub Actions > Build Debug APK > install the resulting APK.
+7. Single-app capture; preview all detected pieces; verify one move at a time.

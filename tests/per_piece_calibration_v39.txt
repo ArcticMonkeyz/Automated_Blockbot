@@ -1,0 +1,9 @@
+Rock Block Bot v3.9 local tests (Kotlin JVM; no Android UI build)
+- Independent calibration key for each exact shape + color: PASS
+- Purple five-high vertical preset (-1 col,+1 row): PASS
+- Previously verified yellow L shape remains at previous calibration: PASS
+- Manual per-piece X/Y delta changes effective endpoint, not other pieces: PASS
+- Unexpected column clear with five-high purple shifted right/up: PASS
+- Ordinary placement displacement detection: PASS
+- Legacy v3.8 tall/global calibration tests: PASS
+- Native Android UI and gesture compilation: NOT RUN (use GitHub Actions)
