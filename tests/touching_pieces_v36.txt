@@ -1,0 +1,17 @@
+v3.6 targeted screenshot and historical recognition regression
+=========================================================
+Target: 1000010922.png
+Visual pieces: red ###/#.. (4), yellow ##### (5), green #### (4).
+Report from v3.5 LIVE capture incorrectly read piece2 as #### (4).
+Game placed five cells, producing UNVERIFIED expected4/actual5.
+
+v3.5 OFFLINE screenshot: ###/#.., ##### (pitch 33), ####.
+v3.6 OFFLINE screenshot: ###/#.., ##### (pitch 39), ####.
+The original live 4-count issue does not reproduce in the supplied saved screenshot;
+this code instead removes a plausible source: a crop at x=440 truncating a
+five-wide middle strip that runs to x~451, while preserving color separation.
+
+Historical files checked: 65 PNGs named 100001*.png in the test session.
+Recognition output identical for 64; the sole difference is target screenshot
+piece2's detected tile pitch; same correct shape count.
+This is a JVM Bitmap-stub offline test, not a real Android device test.

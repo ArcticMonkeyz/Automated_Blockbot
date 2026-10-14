@@ -22,7 +22,8 @@ object BoardRecognizer {
         val gripRow: Int, val gripCol: Int,
         val pitch: Int, val fit: Double,
         val knownShape: Boolean,
-        val stripesX: Int, val stripesY: Int
+        val stripesX: Int, val stripesY: Int,
+        val tileColor: String = ""
     ) {
         fun asPiece(): Piece = Piece(rows.flatMapIndexed { r, line ->
             line.mapIndexedNotNull { c, ch -> if (ch == '#') Cell(r, c) else null }
@@ -39,7 +40,7 @@ object BoardRecognizer {
         }
         val recognized get() = pieces.count { it != null }
         val signature get() = board.toString() + ":" +
-            pieces.joinToString("|") { it?.signature ?: "?" }
+            pieces.joinToString("|") { it?.let { p -> "${p.tileColor}:${p.signature}" } ?: "?" }
         fun boardText(): String = (0..7).joinToString("\n") { r ->
             (0..7).joinToString("") { c ->
                 if ((board and (1L shl (r*8+c))) != 0L) "#" else "."
@@ -51,7 +52,7 @@ object BoardRecognizer {
                 "Piece ${i+1}: " + (p?.let {
                     "${it.signature} (${it.count} blocks, pitch ${it.pitch}, " +
                     "fit ${"%.2f".format(java.util.Locale.US, it.fit)}, " +
-                    "stripes ${it.stripesX}x${it.stripesY}, direct geometry)"
+                    "stripes ${it.stripesX}x${it.stripesY}, color ${it.tileColor}, direct geometry)"
                 } ?: if (trayEvidence.getOrElse(i) { false })
                     "NOT RECOGNIZED (colored piece still visible)" else "NOT RECOGNIZED (empty/uncertain)")
             }.joinToString("\n")
@@ -86,8 +87,63 @@ object BoardRecognizer {
     private data class Zone(val left:Int,val right:Int,val top:Int=1045,val bottom:Int=1320)
     // Keep complete wide pieces in each slot. The old left crop began at
     // x=115 and cut off the first tile of five-wide pieces near x=90.
-    private val zones=listOf(Zone(75,275),Zone(275,440),Zone(440,685))
+    // Seed regions sit INSIDE the three tray slots. Unlike the old hard
+    // cropping boundaries, these only identify the piece color. A five-tile
+    // middle strip can physically extend across x=440 and must remain whole.
+    private val seeds = listOf(Zone(80,245),Zone(290,425),Zone(470,645))
+
+    private fun dominantSeedColor(image: Bitmap, zone: Zone): TileColor? {
+        val counts = IntArray(TileColor.entries.size)
+        for(y in zone.top until zone.bottom step 2) for(x in zone.left until zone.right step 2) {
+            val p = image.getPixel(x,y)
+            TileColor.entries.forEachIndexed { i,color -> if(matches(p,color)) counts[i]++ }
+        }
+        val i = counts.indices.maxByOrNull { counts[it] } ?: return null
+        return TileColor.entries[i].takeIf { counts[i] >= 150 }
+    }
+
+    /** Overlapping search windows are SAFE when neighbors have different
+     * colors: the mask uses this slot's seed color only. When adjacent pieces
+     * share a color, do not merge them. In that case retain the old boundary,
+     * rejecting clipped shapes instead of inventing a shorter piece.
+     */
+    private fun extendedZone(slot: Int, colors: List<TileColor?>): Zone {
+        val c=colors[slot]
+        val sameLeft=slot>0 && c!=null && c==colors[slot-1]
+        val sameRight=slot<2 && c!=null && c==colors[slot+1]
+        return when(slot) {
+            0 -> Zone(65, if(sameRight) 275 else 325)
+            1 -> Zone(if(sameLeft) 275 else 215, if(sameRight) 440 else 520)
+            else -> Zone(if(sameLeft) 440 else 395, 690)
+        }
+    }
     private val knownFootprints by lazy { ShapeLibrary.patterns.toSet() }
+
+    private val fixedZones=listOf(Zone(75,275),Zone(275,440),Zone(440,685))
+
+    /** A search region only needs widening if there is a real continuation of
+     * the SAME-colored object beyond its old edge. Low-count antialias fringes
+     * from different-color neighbors are not a continuation. For same-color
+     * neighbors the expanded zone is disabled by extendedZone().
+     */
+    private fun needsExpansion(image: Bitmap, fixed: Zone, wide: Zone,
+                               color: TileColor): Boolean {
+        // The water background shares BLUE color channels with actual tiles.
+        // Never expand blue from off-slot background evidence alone.
+        if(color == TileColor.BLUE) return false
+        var outsideHits=0
+        var strongColumns=0
+        for(x in wide.left until wide.right) {
+            if(x in fixed.left until fixed.right) continue
+            var hits=0
+            for(y in 1080 until 1285 step 2) if(matches(image.getPixel(x,y),color)) hits++
+            if(hits>=7) strongColumns++
+            outsideHits+=hits
+        }
+        // These are half-resolution samples. A real clipped tile edge spans
+        // many neighboring columns; spurious border coloration is sparse.
+        return strongColumns>=7 && outsideHits>=85
+    }
 
     /** Independent colored-object test for each tray slot. Recognition may
      * reject a valid piece because a seam is obscured; that must never be
@@ -285,19 +341,13 @@ object BoardRecognizer {
             (zone.top+minY+(core.first+core.last)/2.0).toFloat(),
             0,0,pitch.roundToInt(),
             (lanePixels.sum().toDouble()/pixelCount).coerceIn(0.0,1.0),
-            rows.first() in knownFootprints,count,1)
+            rows.first() in knownFootprints,count,1,color.name)
     }
 
-    private fun detectPiece(image:Bitmap,zone:Zone):ObservedPiece? {
-        val colors=TileColor.entries
-        val counts=IntArray(colors.size)
-        for (y in zone.top until zone.bottom step 2) for (x in zone.left until zone.right step 2) {
-            val pixel=image.getPixel(x,y)
-            colors.forEachIndexed { i,color-> if(matches(pixel,color)) counts[i]++ }
-        }
-        val dominant=counts.indices.maxByOrNull { counts[it] } ?: return null
-        if (counts[dominant]<150) return null
-        val color=colors[dominant]
+    private fun detectPiece(image:Bitmap,zone:Zone,color:TileColor?,pruneFringe:Boolean):ObservedPiece? {
+        // The seed selects a color. The wider zone measures its FULL extent.
+        // Different-color neighboring pieces can touch without merging.
+        if(color==null) return null
         val zoneW=zone.right-zone.left; val zoneH=zone.bottom-zone.top
         val mask=BooleanArray(zoneW*zoneH)
         var minX=zoneW;var maxX=-1;var minY=zoneH;var maxY=-1;var pixelCount=0
@@ -308,6 +358,13 @@ object BoardRecognizer {
                 minY=minOf(minY,y);maxY=maxOf(maxY,y) }
         }
         if(pixelCount<500 || maxX<minX) return null
+        // Any substantial matching-color pixels exactly at the search window's
+        // vertical sides mean a shape may extend OUTSIDE our observation.
+        // Never turn a physically clipped five-strip into a four-strip move.
+        val boundaryHits = (0 until zoneH).count { y ->
+            mask[y*zoneW] || mask[y*zoneW + zoneW-1]
+        }
+        if(boundaryHits>=12 && color != TileColor.BLUE) return null
         // The game sea/sky sometimes satisfies the BLUE classifier. Remove
         // disconnected blue speckles and sky patches before measuring the
         // physical block mask. Individual blue tiles may be separate components
@@ -345,6 +402,33 @@ object BoardRecognizer {
                 minY=minOf(minY,y);maxY=maxOf(maxY,y)
             }
             if(pixelCount<500 || maxX<minX) return null
+        }
+        if(pruneFringe) {
+        // Neighboring different-color tiles may produce thin antialiasing
+        // fringes that match this color (e.g. 1-2 green pixels per column
+        // across the yellow piece). Expanded scan zones must not treat that
+        // one-pixel halo as a fifth green tile. Keep columns that have enough
+        // genuine tile-color coverage; do not alter occupied center pixels.
+        run {
+            val profile=IntArray(zoneW)
+            for(y in 0 until zoneH) for(x in 0 until zoneW) {
+                if(mask[y*zoneW+x]) profile[x]++
+            }
+            val peak=profile.maxOrNull() ?: 0
+            val minimum=maxOf(8, (peak*0.20).toInt())
+            val first=(minX..maxX).firstOrNull { profile[it]>=minimum }
+            val last=(maxX downTo minX).firstOrNull { profile[it]>=minimum }
+            if(first!=null && last!=null && first<=last) {
+                for(y in 0 until zoneH) for(x in 0 until zoneW) {
+                    if(mask[y*zoneW+x] && x !in first..last) {
+                        mask[y*zoneW+x]=false
+                        pixelCount--
+                    }
+                }
+                minX=first;maxX=last
+            }
+        }
+        if(pixelCount<500 || maxX<minX) return null
         }
         // A handful of cyan pixels in the sea/sky background can be matched as
         // BLUE at the edge of the right tray zone. In a captured device frame
@@ -427,7 +511,7 @@ object BoardRecognizer {
                 if(coverage>=0.88) {
                     return ObservedPiece(candidate.rows,candidate.gripX,candidate.gripY,
                         candidate.gripRow,candidate.gripCol,candidate.pitch,coverage,
-                        candidate.known,xb.size,yb.size)
+                        candidate.known,xb.size,yb.size,color.name)
                 }
             }
         }
@@ -514,7 +598,7 @@ object BoardRecognizer {
         // color-core detector above; the fallback handles irregular pieces.
         return ObservedPiece(chosen.rows,chosen.gripX,chosen.gripY,
             chosen.gripRow,chosen.gripCol,chosen.pitch,chosen.score.coerceAtMost(1.0),
-            chosen.known,if(validX)xb.size else 0,if(validY)yb.size else 0)
+            chosen.known,if(validX)xb.size else 0,if(validY)yb.size else 0,color.name)
     }
 
     private fun candidateTop(rows:List<String>)=rows.indexOfFirst { '#' in it }
@@ -550,8 +634,17 @@ object BoardRecognizer {
                 if(fraction(image,163+c*55,454+r*55,14)>.55)
                     board=board or (1L shl (r*8+c))
             }
-            val pieces = zones.map { detectPiece(image,it) }
-            val evidence = zones.map { trayHasPieceEvidence(image,it) }
+            val colors=seeds.map { dominantSeedColor(image,it) }
+            val pieces=colors.indices.map { i ->
+                val fixed=fixedZones[i]
+                val wide=extendedZone(i,colors)
+                val useWide=colors[i]?.let { needsExpansion(image,fixed,wide,it) } ?: false
+                val zone=if(useWide) wide else fixed
+                // A malformed continuation must be rejected rather than
+                // returning a plausible but shorter fixed-zone fallback.
+                detectPiece(image,zone,colors[i],useWide)
+            }
+            val evidence=seeds.map { trayHasPieceEvidence(image,it) }
             return Frame(board,pieces,bitmap.width,bitmap.height,evidence)
         } finally { if(image!==bitmap) image.recycle() }
     }

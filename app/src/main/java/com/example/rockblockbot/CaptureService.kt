@@ -267,7 +267,7 @@ class CaptureService : Service() {
         // right-hand block of an irregular piece and shift its placement.
         val fromX = plan.observed.gripX * sx
         val fromY = plan.observed.gripY * sy
-        val (biasCol, biasRow) = PlacementGeometry.shapeCorrectionCells(plan.observed.signature)
+        val (biasCol, biasRow) = PlacementGeometry.shapeCorrectionCells(plan.observed.signature,plan.observed.tileColor)
         val toX = (163f + (plan.move.col + plan.observed.gripCol)*55f) * sx +
             xOffset + biasCol * PlacementGeometry.cellWidthPx(screen.x)
         // The legacy +400 calibration was one row short with a leftmost-tile
@@ -283,7 +283,7 @@ class CaptureService : Service() {
         shapeLabel?.text = "Piece ${plan.move.pieceIndex+1}: ${plan.observed.signature} " +
             "(${plan.observed.count} blocks); pickup tile: " +
             "row ${plan.observed.gripRow+1}, col ${plan.observed.gripCol+1}. " +
-            "Shape correction: ${PlacementGeometry.shapeCorrectionCells(plan.observed.signature)} cells. Check shape!"
+            "Shape correction: ${PlacementGeometry.shapeCorrectionCells(plan.observed.signature,plan.observed.tileColor)} cells. Check shape!"
         val screen = screenSize()
         val coords = gestureCoords(plan)
         if (marker == null) {
@@ -385,7 +385,7 @@ class CaptureService : Service() {
                     setStatus("PREVIEW only: piece ${move.pieceIndex+1}, row ${move.row+1}, col ${move.col+1}. " +
                         "${piece.normalized.size} green cells = full detected shape; blue = pickup tile; red = release. " +
                         "If count/shape differs from the real piece, STOP. Calibration X=$xOffset Y=$yOffset. " +
-                        "Shape adjustment ${PlacementGeometry.shapeCorrectionCells(observed.signature)} cells.")
+                        "Shape adjustment ${PlacementGeometry.shapeCorrectionCells(observed.signature,observed.tileColor)} cells.")
                 }
             } catch (e: Exception) {
                 handler.post {
@@ -507,7 +507,7 @@ class CaptureService : Service() {
             }
             if (valid && shifted == actualAdded && (dx != 0 || dy != 0)) {
                 val screen = screenSize()
-                val (biasCol,biasRow) = PlacementGeometry.shapeCorrectionCells(plan.observed.signature)
+                val (biasCol,biasRow) = PlacementGeometry.shapeCorrectionCells(plan.observed.signature,plan.observed.tileColor)
                 val effectiveX = xOffset + biasCol*PlacementGeometry.cellWidthPx(screen.x)
                 val effectiveY = yOffset + biasRow*PlacementGeometry.cellHeightPx(screen.y)
                 val suggestedX = effectiveX - dx * PlacementGeometry.cellWidthPx(screen.x)

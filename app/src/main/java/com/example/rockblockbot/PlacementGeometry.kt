@@ -20,12 +20,16 @@ object PlacementGeometry {
      *
      * v3.0: horizontal #### landed as preview with global X=84/Y=484.
      * v3.1: ###/#.. landed one cell right/down, hence (-1,-1).
-     * v3.4: horizontal ##### preview was correct but landed one column right,
-     * hence (-1,0). Do NOT apply that shift to #### or unrelated shapes.
+     * v3.4: a PURPLE horizontal ##### landed one column right, hence (-1,0).
+     * v3.6: a YELLOW five-strip placed correctly before that bias was applied,
+     * so limit the five-wide shift to the observed PURPLE color only.
      */
-    fun shapeCorrectionCells(signature: String): Pair<Int, Int> = when (signature) {
-        "###/#.." -> -1 to -1
-        "#####" -> -1 to 0
+    fun shapeCorrectionCells(signature: String, tileColor: String = ""): Pair<Int, Int> = when {
+        signature == "###/#.." -> -1 to -1
+        // Observed rightward misplacement was on a PURPLE five-strip. The
+        // newly observed yellow five-strip (previously cropped to four) landed
+        // at the correct origin WITHOUT that shift. Avoid extrapolating.
+        signature == "#####" && tileColor == "PURPLE" -> -1 to 0
         else -> 0 to 0
     }
 }

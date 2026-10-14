@@ -1,29 +1,32 @@
-# Rock Block Bot v3.5 - horizontal five-block placement correction
+# Rock Block Bot v3.6 — color-separated full tray recognition
 
-This is a small, targeted hotfix based on the two screenshots of the purple five-block strip (`#####`). In the first screenshot, **PREVIEW** correctly indicated five cells in the second board row. In the second, the real purple strip landed **one column to the right**. Recognition was correct; the game's snap/release positioning was not.
+This is a **targeted recognition fix** after the yellow and green strips appeared side by side in the tray. The five-cell middle yellow strip was detected live as `####` (four cells), then the game actually placed **five** yellow cells. The app correctly reported `UNVERIFIED: Detected 5 new cells but expected 4.`
 
-## Changes from v3.4
+## What's fixed
 
-- `PlacementGeometry.shapeCorrectionCells("#####")` now returns `(-1, 0)` (one board-cell left release correction). At a display width of 1080, that means approximately -84 physical screen pixels relative to the v3.4 release endpoint.
-- The global saved calibration **X=84, Y=484 is NOT changed or migrated**. In effect the `#####` footprint releases with X=0, Y=484; the green L `###/#..` keeps its earlier (-1,-1) shape-specific compensation; `####` stays (0,0).
-- Recognition, 41+ shape library, board solving, single-app capture, compact controls, gesture duration, and verification rules are unchanged.
-- Version incremented to `0.3.5` (versionCode 18) so the installed APK can be distinguished from v3.4.
+- **No rigid per-slot cropping for oversized pieces.** The bot now uses narrow, nonoverlapping slot **seeds** to determine each tray piece's color, then widens its observation window only when substantial *matching-color* pixels appear beyond the old slot boundary. The photographed yellow strip extends outside the old middle-zone X=275..440 bounds, so its full length is included.
+- **Touching but different-colored pieces stay separate.** The wider regions overlap by design, but the detected mask is restricted to the color found in that slot's seed. Thin antialiasing fringes from neighboring colors are ignored when a region must be widened.
+- **Adjacent same-color pieces stay conservative.** The bot does not join them across the shared slot boundary. If a piece gets cut at a guarded boundary, it rejects the uncertain result rather than inventing a shorter shape.
+- **Preserve reliable paths.** The old per-slot scan remains active unless the same-color evidence indicates that a piece extends beyond it. The blue water background cannot trigger an automatic wide scan.
+- **Purple-only correction for five-wide strips.** A previous release-offset experiment was based on a *purple* `#####` strip landing one column to the right. The new screenshots show a *yellow* five-strip landing at its intended origin when it was misrecognized as four and therefore had no correction. Thus v3.6 applies that empirical -1 column correction to purple `#####` only, not to yellow or other colors. The global calibration remains unchanged.
 
-## Known limitations
+## Offline tests
 
-This is an **empirical shape-specific correction**, NOT proof that all pieces now land on the highlighted cells. Five-wide placement is inferred from screenshots; the post-release verification report should still be checked after an attempted move. The screenshots show a placement, but an exact completed-frame report was not supplied. The game may use shape-dependent pickup/snap behavior. Never alter the global X/Y based on a single shape, or press NEXT MOVE if the previewed count or footprint is wrong.
+- `1000010922.png` (touching red/yellow/green): red `###/#..` 4, yellow `#####` 5, green `####` 4.
+- Checked **65 saved screenshot images** against v3.5's recognizer: 64 outputs identical. The one changed case is the touching-piece image's yellow five-strip, whose count stayed 5 but tile pitch estimation improved (33px → 39px). The captured app's live misreading of 4 is **not** reproduced by the saved screenshot; real-device confirmation is still required.
+- `tests/CalibrationTest.kt` confirms existing movement compensation remains, and yellow five-wide does **not** inherit the unverified purple-only correction.
+- Tested the modified `BoardRecognizer.kt` through a JVM screenshot harness with Android Bitmap stubs, **not** a full Android APK build.
 
-## Install and controlled test
+## Install and use
 
-1. Extract the ZIP, copy its project files over the corresponding files in your GitHub Desktop repository. Preserve the `.git` and `.github` folders.
-2. Commit and push; wait for GitHub Actions **Build Debug APK** to finish successfully, then install v3.5.
-3. Choose **Share a single app -> Rock Block Saga**. Begin with three visible pieces, and **do not press RESUME** if all three remain.
-4. Tap **PREVIEW**, verify every highlighted tile and pickup marker matches the real selected piece. Never place if a block is missing.
-5. On a correctly recognized horizontal `#####` only, test **NEXT MOVE once**, wait at least 7 seconds for verification, then STOP and send both the landed-board screenshot and the **Last placement check** report.
-6. If the new tray doesn't contain a five-wide piece, don't assume other pieces are recalibrated. Other shapes keep their v3.4 behavior.
+1. Unzip and copy project files over matching files in your existing GitHub Desktop checkout; **do not remove `.git` or `.github`**.
+2. Commit and push; use GitHub Actions **Build Debug APK** to create and install the new APK.
+3. Select **Share a single app → Rock Block Saga**. Leave the saved calibration at **X=84, Y=484** unless a settled verification report proves otherwise.
+4. Start with three actual tray pieces. Tap **PREVIEW**; the count, highlighted cells, and blue pickup marker **must** match the real piece before pressing NEXT MOVE. If any piece is unrecognized, do **not** use RESUME to bypass it.
+5. After a single trial NEXT MOVE, wait for settled verification (at least 7 seconds), then send a screenshot of the final placement and the full **Last placement check** report.
 
-## Local validation
+## Still unresolved
 
-- `tests/CalibrationTest.kt` can be compiled with the pure `PlacementGeometry.kt` using the Kotlin CLI. It checks the existing red and green cases, vertical-five unchanged, and the new horizontal-five correction at a 1080x2400 display.
-- ZIP contents/integrity can be checked with `unzip -t`.
-- A full Android APK build is **not** performed locally; the GitHub Actions build is still required.
+- Color/shape detection is based on screenshot captures, not image/object recognition trained on the full game. It may reject or misread new visual variants.
+- The game has shown shape-dependent snapping. **Accurate recognition doesn't prove accurate placement** for all shapes. The app remains user-confirmed PREVIEW → NEXT MOVE, one gesture at a time, with verification and halt on mismatch. Do not assume unattended/autonomous play is safe.
+- No full Android SDK compilation performed in the sandbox. GitHub Actions is the required APK build test.

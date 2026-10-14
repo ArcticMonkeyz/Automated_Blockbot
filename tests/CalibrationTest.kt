@@ -29,14 +29,15 @@ fun main() {
     require(PlacementGeometry.shapeCorrectionCells("####") == (0 to 0))
     // v3.4: purple five-wide strip landed one column RIGHT of its correct
     // preview. Compensate on this footprint only, preserving the good ####.
-    require(PlacementGeometry.shapeCorrectionCells("#####") == (-1 to 0))
+    require(PlacementGeometry.shapeCorrectionCells("#####", "PURPLE") == (-1 to 0))
+    require(PlacementGeometry.shapeCorrectionCells("#####", "YELLOW") == (0 to 0))
     require(PlacementGeometry.shapeCorrectionCells("#/#/#/#/#") == (0 to 0))
     require(PlacementGeometry.shapeCorrectionCells("#./##/.#") == (0 to 0))
     val (greenBiasX,greenBiasY)=PlacementGeometry.shapeCorrectionCells("###/#..")
     val effectiveGreenX=84+greenBiasX*dx
     val effectiveGreenY=484+greenBiasY*dy
     require(effectiveGreenX==0 && effectiveGreenY==398)
-    val (purpleBiasX,purpleBiasY)=PlacementGeometry.shapeCorrectionCells("#####")
+    val (purpleBiasX,purpleBiasY)=PlacementGeometry.shapeCorrectionCells("#####", "PURPLE")
     val effectivePurpleX=84+purpleBiasX*dx
     val effectivePurpleY=484+purpleBiasY*dy
     require(effectivePurpleX==0 && effectivePurpleY==484)

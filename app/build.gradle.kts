@@ -9,8 +9,8 @@ android {
         applicationId = "com.example.rockblockbot"
         minSdk = 29
         targetSdk = 34
-        versionCode = 18
-        versionName = "0.3.5"
+        versionCode = 19
+        versionName = "0.3.6"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
