@@ -10,8 +10,51 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
 import android.widget.*
+import java.io.File
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 
 class MainActivity : Activity() {
+    private val exportRequestCode = 201
+    private fun exportDiagnostics() {
+        val folder = File(filesDir, "calibration_diagnostics")
+        val png = File(folder, "latest_probe.png")
+        val txt = File(folder, "latest_probe.txt")
+        if (!png.isFile || !txt.isFile) {
+            Toast.makeText(this, "No complete diagnostic capture yet. Run CAL DRAG first.", Toast.LENGTH_LONG).show()
+            return
+        }
+        val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "application/zip"
+            putExtra(Intent.EXTRA_TITLE, "RockBlockBot-diagnostics.zip")
+        }
+        startActivityForResult(intent, exportRequestCode)
+    }
+    private fun saveDiagnostics(uri: Uri) {
+        try {
+            val folder = File(filesDir, "calibration_diagnostics")
+            val png = File(folder, "latest_probe.png")
+            val txt = File(folder, "latest_probe.txt")
+            if (!png.isFile || !txt.isFile) {
+                Toast.makeText(this, "Diagnostic files are missing", Toast.LENGTH_LONG).show()
+                return
+            }
+            val output = contentResolver.openOutputStream(uri) ?: throw IllegalStateException("Unable to open selected file")
+            output.use { stream ->
+                ZipOutputStream(stream).use { zip ->
+                    for (file in listOf(png, txt)) {
+                        zip.putNextEntry(ZipEntry(file.name))
+                        file.inputStream().use { it.copyTo(zip) }
+                        zip.closeEntry()
+                    }
+                }
+            }
+            Toast.makeText(this, "Diagnostics exported. Share the ZIP from Files.", Toast.LENGTH_LONG).show()
+        } catch (e: Exception) {
+            Toast.makeText(this, "Export failed: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+    }
     private lateinit var report: TextView
     private val handler = Handler(Looper.getMainLooper())
     private val refresh = object : Runnable {
@@ -32,7 +75,7 @@ class MainActivity : Activity() {
         fun button(value: String, fn: () -> Unit) {
             layout.addView(Button(this).apply { text=value; setOnClickListener { fn() } })
         }
-        label("Rock Block Bot v4.4.4 — compact controls and timed shadow capture (TRIAL)",22f)
+        label("Rock Block Bot v4.4.9 — export diagnostics",22f)
         label("1. Enable overlay/accessibility and SHARE A SINGLE APP: Rock Block Saga. " +
             "2. PREVIEW only when all real pieces are recognized. The numbered cyan " +
             "markers must match each visible tray tile and the green cells are the intended placement. " +
@@ -70,6 +113,7 @@ class MainActivity : Activity() {
         button("STOP and remove floating controls") {
             startService(Intent(this,CaptureService::class.java).setAction("STOP"))
         }
+        button("EXPORT DIAGNOSTICS (save ZIP to phone)") { exportDiagnostics() }
         label("Latest game report and test status:",19f)
         report = TextView(this).apply { textSize=15f; setTextIsSelectable(true); setPadding(6,12,6,12) }
         layout.addView(report)
@@ -79,6 +123,10 @@ class MainActivity : Activity() {
     @Deprecated("Android activity result API")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode,resultCode,data)
+        if (requestCode==exportRequestCode) {
+            if (resultCode==RESULT_OK && data?.data!=null) saveDiagnostics(data.data!!)
+            return
+        }
         if (requestCode==100 && resultCode==RESULT_OK && data!=null) {
             startForegroundService(Intent(this,CaptureService::class.java).apply {
                 action="START"; putExtra("code",resultCode); putExtra("data",data)
