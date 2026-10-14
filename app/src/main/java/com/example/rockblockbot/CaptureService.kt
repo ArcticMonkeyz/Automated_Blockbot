@@ -63,7 +63,9 @@ class CaptureService : Service() {
                     bmp.copyPixelsFromBuffer(plane.buffer)
                     val cropped = Bitmap.createBitmap(bmp, 0, 0, w, h)
                     val result = BoardRecognizer.analyze(cropped)
-                    getSharedPreferences("capture", MODE_PRIVATE).edit().putString("report", result).apply()
+                    if (result != null) {
+                        getSharedPreferences("capture", MODE_PRIVATE).edit().putString("report", result).apply()
+                    }
                     cropped.recycle(); bmp.recycle()
                 } catch (e: Exception) {
                     getSharedPreferences("capture", MODE_PRIVATE).edit().putString("report", "Capture error: ${e.message}").apply()

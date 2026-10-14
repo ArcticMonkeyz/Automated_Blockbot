@@ -1,26 +1,22 @@
-# RockBlockBot v2 — recognition diagnostics
+# Rock Block Bot v2.1 — Board and Piece Recognition Test
 
-This is a **screen-recognition test build**, not an unattended game-playing bot.
+This Android app is a **diagnostic prototype**. It does not move pieces or play the game.
 
-## Changes
-- Uses Android MediaProjection with a foreground service and visible notification.
-- Requests permission for each screen capture session (Android 14+ compliant).
-- Reads live 8x8 board pixels using the fixed screenshot geometry from the user's 709x1536 images.
-- Reports detected cells and preliminary piece-zone signals in the app.
-- Keeps the solver from v1, but does **not** dispatch automated moves. Recognition must be calibrated first.
+## Changes since v2
+- Preserves the most recent recognized game frame when returning to Blockbot.
+- Detects the 8x8 board and attempts to read all three available shapes.
+- Supports common red, green, blue, purple, and yellow piece colors.
+- Replaces the misleading screen-aspect-ratio confidence check with a preliminary/partial diagnostic.
 
-## Test
-1. Build the APK using the existing `.github/workflows/build-apk.yml` workflow in the repository.
-2. Install over v1.
-3. Tap Start screen recognition and choose **Entire screen**.
-4. Switch to Rock Block Saga with an active puzzle. Wait a few seconds.
-5. Return to Blockbot and review the 8x8 detection report. Compare with the actual game.
-6. Tap Stop screen recognition to end capture.
+## Testing
+1. Build `:app:assembleDebug` using the existing GitHub Actions workflow.
+2. Install the APK on your Pixel 7 Pro.
+3. Start recognition and approve **Entire screen** or **Single app: Rock Block Saga**.
+4. Open an active game board with three unplaced pieces for 5–10 seconds.
+5. Return to Blockbot and compare its eight rows and three `#`/`.` shapes with the actual game.
+6. If a shape is wrong, send screenshots of the game board and Blockbot report.
 
-If the screenshot aspect ratio differs due to status/nav bars, the reported confidence will be low and the coordinates need calibration. **No screen data is uploaded anywhere**; recognition happens on-device.
+The detector uses the game's reference coordinates from screenshots at 709x1536, rescaled to captured frame dimensions. Different layouts, overlays, animations, or unfamiliar colors may require calibration. The `PRELIMINARY` label is not proof of accuracy. Do not enable automation based on this diagnostic alone.
 
-## Build note
-The source is uncompiled in this environment. The Android CI workflow previously built v1 successfully. A new CI run is needed to validate this revision.
-
-## Security
-The app asks for Android's screen-capture permission and runs a foreground notification while capturing. Do not grant capture while viewing passwords, banking, or other sensitive screens.
+## GitHub Desktop update
+Copy the contents of this folder into the cloned repository, replacing matching files. **Keep `.git` and `.github` unchanged.** Commit to main, push origin, and download the new Actions artifact. This package does not include a GitHub Actions workflow because the existing one works.

@@ -1,8 +1,10 @@
-Update the existing repository https://github.com/ArcticMonkeyz/Automated_Blockbot
+Blockbot v2.1 update (GitHub Desktop)
 
-1. Open the extracted RockBlockBot-v2 folder.
-2. Upload its `app` directory and root `README.md` to the existing repository, REPLACING existing files at the same paths. GitHub's normal Upload files interface may reject overwriting existing paths; the easiest reliable method is GitHub Desktop or Git CLI. Alternatively, use GitHub web editor to update individual files.
-3. Keep your existing .github/workflows/build-apk.yml (it already built v1).
-4. Commit to main and inspect Actions.
-
-This package intentionally contains NO hidden .github folder.
+1. Extract this ZIP on your PC.
+2. Open GitHub Desktop > Repository > Show in Explorer.
+3. Copy everything INSIDE the extracted folder into your cloned repository.
+4. Choose Replace existing files. DO NOT delete .git or .github.
+5. GitHub Desktop: Summary = "Blockbot v2.1 piece recognition"; Commit to main; Push origin.
+6. GitHub > Actions > successful build > Artifacts > download the APK ZIP.
+7. Extract app-debug.apk and install on your Pixel 7 Pro.
+8. Run a game frame and compare the three piece shapes with the game.

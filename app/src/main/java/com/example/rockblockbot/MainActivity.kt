@@ -36,8 +36,8 @@ class MainActivity : Activity() {
             this.text = text; textSize = size; setPadding(0, 12, 0, 12)
             layout.addView(this)
         }
-        info("Rock Block Bot — recognition test", 23f)
-        info("Step 1: Start capture and choose ENTIRE SCREEN in Android's permission dialog. Step 2: Switch to Rock Block Saga and show an active puzzle. Step 3: Return here to review detection. No blocks will be moved in this version.")
+        info("Rock Block Bot — board + piece recognition", 23f)
+        info("Step 1: Start capture and choose ENTIRE SCREEN in Android's permission dialog. Step 2: Switch to Rock Block Saga and show an active puzzle. Step 3: Return here to review the last GAME frame. The report will not be overwritten when you switch back. No blocks will be moved in this version.")
         layout.addView(Button(this).apply {
             text = "Start screen recognition"
             setOnClickListener {
