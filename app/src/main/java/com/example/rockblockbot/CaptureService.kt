@@ -46,6 +46,11 @@ class CaptureService : Service() {
     private var preparing = false
     private var xOffset = 0
     private var yOffset = 400
+    // Trial relative offset for pieces taller than they are wide. Unlike
+    // v3.7, GLOBAL Y remains active and changing it always moves the endpoint.
+    private var tallDelta = PlacementGeometry.DEFAULT_TALL_DELTA_PX
+    private var coordsLabel: TextView? = null
+    private var lastTouchPath = "No gesture dispatched yet."
     private var lastPlacementCheck = "No confirmed placement yet."
     private data class Prepared(
         val frame: BoardRecognizer.Frame,
@@ -79,10 +84,11 @@ class CaptureService : Service() {
     private fun publish() {
         val f = latest
         val time = if (latestAt > 0) SimpleDateFormat("HH:mm:ss",Locale.US).format(Date(System.currentTimeMillis() - (SystemClock.elapsedRealtime()-latestAt))) else "none"
-        val text = "Status: $status\nCalibration: X ${xOffset}px, Y ${yOffset}px\nLast gesture result: $lastGestureOutcome\nLast placement check: $lastPlacementCheck\nLast game frame: $time | stable frames: $stableCount\n\n" +
+        val text = "Status: $status\nCalibration: X ${xOffset}px, Y ${yOffset}px, Tall delta ${tallDelta}px, Tall Y ${yOffset + tallDelta}px\nLast gesture result: $lastGestureOutcome\nLast touch path: $lastTouchPath\nLast placement check: $lastPlacementCheck\nLast game frame: $time | stable frames: $stableCount\n\n" +
             (f?.report() ?: "No game board captured yet.") + "\n\nUser-confirmed moves only. STOP removes floating controls."
         getSharedPreferences("capture",MODE_PRIVATE).edit()
-            .putString("report",text).putString("placementCheck",lastPlacementCheck).apply()
+            .putString("report",text).putString("placementCheck",lastPlacementCheck)
+            .putString("lastTouchPath",lastTouchPath).apply()
     }
     private fun setStatus(s: String) { status=s; publish() }
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -96,6 +102,10 @@ class CaptureService : Service() {
         val prefs = getSharedPreferences("calibration", MODE_PRIVATE)
         lastPlacementCheck = getSharedPreferences("capture",MODE_PRIVATE)
             .getString("placementCheck", "No confirmed placement yet.") ?: "No confirmed placement yet."
+        lastTouchPath = getSharedPreferences("capture",MODE_PRIVATE)
+            .getString("lastTouchPath", "No gesture dispatched yet.") ?: "No gesture dispatched yet."
+        tallDelta = prefs.getInt("tallDeltaV38", PlacementGeometry.DEFAULT_TALL_DELTA_PX)
+
         // v2.9 successfully picked up the green four-strip, but in the observed
         // board test it landed one COLUMN left and one ROW above the preview.
         // Shift the *finger release*, not the planned board cells or pickup.
@@ -186,28 +196,37 @@ class CaptureService : Service() {
             setOnClickListener { resumePartialTray() }
         })
         val adjustments = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
+            orientation = LinearLayout.VERTICAL
             visibility = View.GONE
         }
+        val globalAdjustments = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val tallAdjustments = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        adjustments.addView(globalAdjustments)
+        adjustments.addView(tallAdjustments)
         val calibrationToggle = Button(this).apply {
-            text = "SHOW X/Y"
+            text = "SHOW CAL"
             textSize = 11f
             setOnClickListener {
                 val opening = adjustments.visibility != View.VISIBLE
                 adjustments.visibility = if (opening) View.VISIBLE else View.GONE
-                text = if (opening) "HIDE X/Y" else "SHOW X/Y"
+                text = if (opening) "HIDE CAL" else "SHOW CAL"
             }
         }
         optionsRow.addView(calibrationToggle)
         panel.addView(optionsRow)
-        fun adjustButton(label: String, dx: Int, dy: Int) {
-            adjustments.addView(Button(this).apply {
+        fun adjustButton(parent: LinearLayout, label: String, onPress: () -> Unit) {
+            parent.addView(Button(this).apply {
                 text = label
-                setOnClickListener { adjust(dx,dy) }
+                textSize = 11f
+                setOnClickListener { onPress() }
             })
         }
-        adjustButton("X -",-20,0); adjustButton("X +",20,0)
-        adjustButton("Y -",0,-20); adjustButton("Y +",0,20)
+        adjustButton(globalAdjustments, "X -") { adjust(-20, 0) }
+        adjustButton(globalAdjustments, "X +") { adjust(20, 0) }
+        adjustButton(globalAdjustments, "Y -") { adjust(0, -20) }
+        adjustButton(globalAdjustments, "Y +") { adjust(0, 20) }
+        adjustButton(tallAdjustments, "TALL Y -") { adjustTall(-20) }
+        adjustButton(tallAdjustments, "TALL Y +") { adjustTall(20) }
         panel.addView(adjustments)
         offsetLabel = TextView(this).apply {
             setTextColor(0xFFFFFFFF.toInt())
@@ -221,6 +240,13 @@ class CaptureService : Service() {
             text = "Tap PREVIEW to inspect the detected shape."
         }
         panel.addView(shapeLabel)
+        coordsLabel = TextView(this).apply {
+            setTextColor(0xFFE1F7FF.toInt())
+            textSize = 11f
+            maxLines = 2
+            text = "Pickup/release coordinates appear after PREVIEW."
+        }
+        panel.addView(coordsLabel)
         updateOffsetLabel()
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
@@ -239,7 +265,8 @@ class CaptureService : Service() {
     }
 
     private fun updateOffsetLabel() {
-        offsetLabel?.text = "Touch endpoint offset: X ${xOffset}px, Y ${yOffset}px (20px steps)"
+        val effectiveTallY = yOffset + tallDelta
+        offsetLabel?.text = "X ${xOffset}px | Y ${yOffset}px | Tall delta ${tallDelta}px (tall Y ${effectiveTallY}px)"
     }
 
     private fun adjust(dx: Int, dy: Int) {
@@ -251,6 +278,17 @@ class CaptureService : Service() {
         updateOffsetLabel()
         updateMarker()
         setStatus("Offsets updated. PREVIEW is visual only; NEXT MOVE performs one confirmed drag.")
+    }
+
+    /** A tall-only adjustment; never changes the global horizontal-piece Y. */
+    private fun adjustTall(dy: Int) {
+        if (inProgress || sessionBlocked) return
+        tallDelta = (tallDelta + dy).coerceIn(-800, 400)
+        getSharedPreferences("calibration",MODE_PRIVATE).edit()
+            .putInt("tallDeltaV38",tallDelta).apply()
+        updateOffsetLabel()
+        updateMarker()
+        setStatus("Tall Y adjusted. Both global Y and tall delta affect tall-piece release; check red marker.")
     }
 
     private fun screenSize(): Point = Point().also { point ->
@@ -270,11 +308,11 @@ class CaptureService : Service() {
         val (biasCol, biasRow) = PlacementGeometry.shapeCorrectionCells(plan.observed.signature,plan.observed.tileColor)
         val toX = (163f + (plan.move.col + plan.observed.gripCol)*55f) * sx +
             xOffset + biasCol * PlacementGeometry.cellWidthPx(screen.x)
-        // The legacy +400 calibration was one row short with a leftmost-tile
-        // grip. Version 3.0 migrates the saved X/Y endpoint bias once; the
-        // board-preview geometry remains untouched.
+        // Global Y always applies. For tall pieces, apply an independent
+        // relative delta (default -240px); the v3.7 hardcoded Y=0 is gone.
+        // The board-preview geometry remains untouched.
         val effectiveY = PlacementGeometry.effectiveYOffsetPx(
-            plan.piece.height, plan.piece.width, yOffset, biasRow,
+            plan.piece.height, plan.piece.width, yOffset, tallDelta, biasRow,
             PlacementGeometry.cellHeightPx(screen.y))
         val toY = (454f + (plan.move.row + plan.observed.gripRow)*55f) * sy + effectiveY
         return floatArrayOf(fromX,fromY,toX,toY)
@@ -287,9 +325,17 @@ class CaptureService : Service() {
             "row ${plan.observed.gripRow+1}, col ${plan.observed.gripCol+1}. " +
             "Shape correction: ${PlacementGeometry.shapeCorrectionCells(plan.observed.signature,plan.observed.tileColor)} cells; " +
             (if (PlacementGeometry.directTallAnchor(plan.piece.height,plan.piece.width))
-                "TALL DIRECT GRIP (trial). " else "") + "Check shape!"
+                "Tall Y calibrated (trial). " else "") + "Check shape!"
         val screen = screenSize()
         val coords = gestureCoords(plan)
+        val (biasCol,biasRow) = PlacementGeometry.shapeCorrectionCells(
+            plan.observed.signature, plan.observed.tileColor)
+        val actualY = PlacementGeometry.effectiveYOffsetPx(
+            plan.piece.height, plan.piece.width, yOffset, tallDelta, biasRow,
+            PlacementGeometry.cellHeightPx(screen.y))
+        val actualX = xOffset + biasCol * PlacementGeometry.cellWidthPx(screen.x)
+        coordsLabel?.text = "Finger: (${coords[0].toInt()}, ${coords[1].toInt()})" +
+            " -> (${coords[2].toInt()}, ${coords[3].toInt()}) px; effective X=$actualX Y=$actualY"
         if (marker == null) {
             marker = CalibrationOverlay(this)
             val params = WindowManager.LayoutParams(
@@ -311,6 +357,7 @@ class CaptureService : Service() {
     private fun removeMarker() {
         try { marker?.let { wm?.removeView(it) } } catch (_: Exception) {}
         marker = null
+        coordsLabel?.text = "Pickup/release coordinates appear after PREVIEW."
     }
 
 
@@ -391,7 +438,7 @@ class CaptureService : Service() {
                         "If count/shape differs from the real piece, STOP. Calibration X=$xOffset Y=$yOffset. " +
                         "Shape adjustment ${PlacementGeometry.shapeCorrectionCells(observed.signature,observed.tileColor)} cells. " +
                         (if (PlacementGeometry.directTallAnchor(piece.height,piece.width))
-                            "Tall direct-grip trial; verify placement. " else ""))
+                            "Tall-adjusted release (trial): effective Y=${yOffset+tallDelta}px before shape bias. " else ""))
                 }
             } catch (e: Exception) {
                 handler.post {
@@ -425,7 +472,7 @@ class CaptureService : Service() {
         val screen = screenSize()
         if (coords[0] !in 0f..screen.x.toFloat() || coords[1] !in 0f..screen.y.toFloat() ||
             coords[2] !in 0f..screen.x.toFloat() || coords[3] !in 0f..screen.y.toFloat()) {
-            setStatus("Drag would leave the screen. Adjust X/Y first."); return
+            setStatus("Drag would leave the screen. Adjust X/Y or TALL Y, then check the preview."); return
         }
         inProgress = true
         captureFrozen = false
@@ -435,6 +482,10 @@ class CaptureService : Service() {
         prepared = null
         shapeLabel?.text = "Moving one piece. Wait for verification."
         lastGestureOutcome = "Waiting for Android gesture result"
+        lastTouchPath = "Piece ${plan.move.pieceIndex+1} ${plan.observed.signature}: " +
+            "pickup (${coords[0].toInt()},${coords[1].toInt()}) -> " +
+            "release (${coords[2].toInt()},${coords[3].toInt()}) screen px, " +
+            "global X=$xOffset Y=$yOffset, tall delta=$tallDelta"
         lastPlacementCheck = "PENDING: Drag started; awaiting settled post-release game frame."
         setStatus("Testing piece ${plan.move.pieceIndex+1} at row ${plan.move.row+1}, " +
             "col ${plan.move.col+1}; endpoint (${coords[2].toInt()}, ${coords[3].toInt()}).")
@@ -520,7 +571,7 @@ class CaptureService : Service() {
                 val (biasCol,biasRow) = PlacementGeometry.shapeCorrectionCells(plan.observed.signature,plan.observed.tileColor)
                 val effectiveX = xOffset + biasCol*PlacementGeometry.cellWidthPx(screen.x)
                 val effectiveY = PlacementGeometry.effectiveYOffsetPx(
-                    plan.piece.height,plan.piece.width,yOffset,biasRow,
+                    plan.piece.height,plan.piece.width,yOffset,tallDelta,biasRow,
                     PlacementGeometry.cellHeightPx(screen.y))
                 val suggestedX = effectiveX - dx * PlacementGeometry.cellWidthPx(screen.x)
                 val suggestedY = effectiveY - dy * PlacementGeometry.cellHeightPx(screen.y)
@@ -550,7 +601,7 @@ class CaptureService : Service() {
         captureFrozen=false
         removeMarker()
         try { overlay?.let { wm?.removeView(it) } } catch (_: Exception) {}
-        overlay=null; moveButton=null; previewButton=null; offsetLabel=null; shapeLabel=null; prepared=null
+        overlay=null; moveButton=null; previewButton=null; offsetLabel=null; shapeLabel=null; coordsLabel=null; prepared=null
         reader?.setOnImageAvailableListener(null,null)
         imageThread?.quitSafely(); imageThread=null
         display?.release(); display=null

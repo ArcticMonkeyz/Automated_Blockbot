@@ -15,27 +15,31 @@ object PlacementGeometry {
         (gridPitchRef * displayHeight / heightRef).roundToInt()
 
     /**
-     * Trial fix for tall pieces. The +484px release Y offset was calibrated
-     * against short, horizontal pieces. On a five-high vertical piece the
-     * release marker was hundreds of pixels below the board: Android moved
-     * the finger but the game returned the piece to the tray (0 new cells).
+     * The v3.7 direct-tall release forced effective Y to zero, ignoring the
+     * user-adjustable Y offset. On-device, that lifted a three-row yellow L
+     * above the board; the former +484px offset could leave a five-high piece
+     * too low. v3.8 starts halfway between those failed extremes, but treats
+     * that as a *trial* calibration, not a universal height formula.
      *
-     * For a taller-than-wide piece with 3+ occupied grid rows, place the
-     * pickup tile directly over its target tile instead of applying the
-     * short-piece lift offset. Keep all established short-piece corrections.
-     * Geometry-based: works without listing the shape in ShapeLibrary.
-     *
-     * This is experimental until confirmed on-device, and MUST NOT alter the
-     * persisted/global calibration used by horizontal pieces.
+     * Both GLOBAL Y and TALL DELTA always contribute to the release Y.
+     * Users can tune tall pieces independently without shifting horizontal
+     * pieces. Any footprint-specific row correction is applied to both.
      */
-    fun effectiveYOffsetPx(pieceHeight: Int, pieceWidth: Int,
-                           globalY: Int, shapeBiasRows: Int,
-                           cellHeightPx: Int): Int =
-        if (pieceHeight >= 3 && pieceHeight > pieceWidth) 0
-        else globalY + shapeBiasRows * cellHeightPx
+    const val DEFAULT_TALL_DELTA_PX = -240
 
-    fun directTallAnchor(pieceHeight: Int, pieceWidth: Int): Boolean =
+    fun isTall(pieceHeight: Int, pieceWidth: Int): Boolean =
         pieceHeight >= 3 && pieceHeight > pieceWidth
+
+    fun effectiveYOffsetPx(pieceHeight: Int, pieceWidth: Int,
+                           globalY: Int, tallDeltaPx: Int,
+                           shapeBiasRows: Int, cellHeightPx: Int): Int =
+        globalY + (if (isTall(pieceHeight, pieceWidth)) tallDeltaPx else 0) +
+            shapeBiasRows * cellHeightPx
+
+    // Kept as an API alias for existing callers/tests; now denotes a tall
+    // calibration category, NOT a special direct-grip or Y=0 path.
+    fun directTallAnchor(pieceHeight: Int, pieceWidth: Int): Boolean =
+        isTall(pieceHeight, pieceWidth)
 
     /** Empirical, footprint-specific compensation for game-side snap behavior.
      * These affect only the release endpoint, never the solver's target or the

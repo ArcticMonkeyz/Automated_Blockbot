@@ -1,36 +1,30 @@
-# Rock Block Bot v3.7 — tall-piece direct-grip placement trial
+# Rock Block Bot v3.8 — adjustable tall-piece calibration
 
-This update addresses a **placement failure**, not the recognition system.
+**Purpose:** Fix a v3.7 bug where tall pieces ignored the Y +/- buttons because their release Y was forced to zero. The yellow 3-row piece visibly traveled above the board and snapped back (0 new board cells); a 5-high piece previously ended too low with the old full +484px offset. The right release bias is not yet proven for every shape.
 
-## Evidence from v3.6 test
+## Changes from v3.7
 
-- At the start of the round, all three pieces were available: green horizontal 5, blue L-shaped 4 in the middle slot, and purple vertical 5. **The solver selected Piece 2 (blue) first.** That is intentional: the strategy can select any of the three, not just the leftmost piece.
-- Blue `###/#..` was moved to the upper-right board area. The following report counted 10 occupied board cells, compared with the original six; the blue placement appears to have succeeded.
-- The next preview correctly recognized Piece 3 (purple) as `#/#/#/#/#` (five vertical blocks). Its red finger-release crosshair was visibly below the board. Android completed the drag, but the settled report indicated **0 new cells** and the piece remained in its tray slot. It therefore did not place.
+- Every piece now responds to the **global X/Y** controls. The v3.7 `TALL DIRECT GRIP` / forced-Y-zero rule is removed.
+- For pieces with **height >= 3 and height > width**, a separately adjustable **Tall Y delta** applies *in addition to* global Y and any shape-specific correction. Horizontal/short-piece alignment stays unchanged.
+- Initial tall delta is **-240 screen pixels**, a cautious unverified midpoint between the previous too-high 0 and too-low +484 release offsets. With saved global Y +484, the effective tall Y starts at **+244 px** (before footprint-specific corrections).
+- Tap **SHOW CAL** to reveal global **X +/-**, **Y +/-**, and **TALL Y +/-** (20 screen-pixel steps). Settings persist across sessions.
+- PREVIEW now shows the **exact pickup and release finger coordinates in screen pixels**, as well as effective X/Y. The red crosshair is the *finger release point*, not the intended block placement. Green squares remain the planned board cells.
+- The latest report includes a persistent **Last touch path**, allowing investigation even after STOP.
+- Preserves v3.6 colored-piece recognition, v3.5/3.6 shape-specific corrections, existing solver, explicit PREVIEW -> NEXT MOVE workflow, and 350ms hold.
 
-## Change
+## Recommended test
 
-**For tall pieces (height >= 3 cells AND height > width):** compute the finger release by aligning the detected *pickup block* directly over its target tile on the board, without the +484px Y compensation used by shorter pieces. This moves the purple five-vertical preview release marker upward by 484 physical pixels on the tested setup. Short/horizontal pieces retain ALL prior calibration and shape-specific corrections. The saved global calibration remains X=84 Y=484.
+1. Extract the ZIP and copy its files into your existing GitHub Desktop repository; **preserve `.git` and `.github`**.
+2. Commit/push and run the existing **Build Debug APK** workflow in GitHub Actions. Install the new APK, keeping saved **X=84, Y=484** unless you have intentionally changed those values.
+3. In Android, choose **Share a single app -> Rock Block Saga**. With 3 new tray pieces, tap PREVIEW (not RESUME).
+4. Confirm **every highlighted green square** matches the full physical piece. For the yellow `##/#./#.` or purple 5-high vertical piece, inspect the red crosshair and the new pickup/release coordinate label.
+5. If the shape is correct and the crosshair is plausibly located, test **one** NEXT MOVE, wait **at least 7 seconds** without stopping capture, and check whether the piece actually lands. If it fails or seems too high or low, **STOP**, and send the preview, settled board screenshot, and Last placement check / Last touch path. Do **not** automatically retry.
+6. To tune the *next* tall piece, press SHOW CAL, then use **TALL Y +** to move the release finger **down** by 20 pixels, or **TALL Y -** to move it **up**. The **Y +/-** buttons always affect both tall and non-tall pieces. Any adjustment updates the red preview marker immediately, but never triggers a drag itself.
 
-This correction is geometry-driven, not a special-case piece-library entry. It also affects other taller-than-wide pieces, which must be tested separately. It is an **experimental placement fix**, not proof of accurate snapping; if a tall piece lands incorrectly, the bot stops rather than retrying.
+**Safety note:** The new tall offset is an estimate, not a verified calibration. The on-device behavior may depend on shape and game drag snapping. Keep manual confirmation enabled and do not run unattended.
 
-If verification sees 0 new board cells after a no-clear placement, the report now explicitly says `NO PLACEMENT` and warns the piece may have snapped back instead of suggesting the piece was recognized with an incorrect number of cells.
+## Testing
 
-## Offline checks
+`kotlinc app/src/main/java/com/example/rockblockbot/PlacementGeometry.kt tests/CalibrationTest.kt -include-runtime -d /tmp/blockbot-calibration.jar && java -jar /tmp/blockbot-calibration.jar`
 
-- `tests/CalibrationTest.kt` passes with `kotlinc` and tests the new tall-piece release calculation, plus the original 4-wide, purple 5-wide, yellow 5-wide, and green L corrections.
-- Source package/ZIP verified. No Android SDK compilation in this environment; build in GitHub Actions.
-- `tests/tall_grip_v37.txt` records calculation and expected visual changes.
-
-## Install
-
-1. Unzip and copy project files into the existing GitHub Desktop checkout, overwriting matching files; preserve `.git` and `.github`.
-2. Commit, push, build **Debug APK** in GitHub Actions, and install the APK.
-3. Choose **Share a single app → Rock Block Saga**. Keep global calibration **X=84, Y=484**.
-4. With all three tray pieces visible, PREVIEW without RESUME. If the selected shape/count is correct, try one NEXT MOVE. Wait at least seven seconds, then inspect its final location and report.
-5. For a **purple five-vertical** test, the red release crosshair should now be much closer to/inside the board than in v3.6. If the red crosshair is clearly misaligned with the planned preview, or the actual piece has a different shape, **do not press NEXT MOVE**. Send the preview screenshot.
-6. If you test a movement, send both the preview, the settled board and the Last placement check report. Stop on `UNVERIFIED` or `NO PLACEMENT`.
-
-## Still unresolved
-
-Correct release alignment for every piece type is not established. Game-side touch anchoring has varied with shape. The app stays in manual PREVIEW → NEXT MOVE mode and blocks subsequent movements when post-drag verification fails. Do not assume unattended play works.
+Pure Kotlin geometry tests passed locally. Android SDK is not available in this environment, so GitHub Actions still needs to compile the APK and actual placements need phone testing.

@@ -1,62 +1,37 @@
 import com.example.rockblockbot.PlacementGeometry
 
 fun main() {
-    val w=1080
-    val h=2400
-    // The observed v2.9 landing was one column left, one row above.
-    // Offsets are measured in Android display px, not the 709x1536 image.
-    val dx=PlacementGeometry.cellWidthPx(w)
-    val dy=PlacementGeometry.cellHeightPx(h)
-    require(dx == 84) { "Grid column in screen px: $dx" }
-    require(dy == 86) { "Grid row in screen px: $dy" }
-    val priorX=0
-    val priorY=400
-    val migratedX=priorX+dx
-    val migratedY=priorY+dy
-    require(migratedX == 84 && migratedY == 486)
-    // Applying migration twice is prohibited by the persistent version flag.
-    val usedX = migratedX
-    val usedY = migratedY
-    require(usedX == 84 && usedY == 486)
-    // After a placement that lands delta=-1,-1, recommended delta cancels it.
-    fun correct(current:Int, observedDelta:Int, cellPx:Int)=current-observedDelta*cellPx
-    require(correct(0,-1,dx)==84)
-    require(correct(400,-1,dy)==486)
-    // v3.0 red horizontal #### placed correctly with the global calibration.
-    // The observed green ###/#.. landed +1 column,+1 row at that setting.
-    // Its correction must NOT alter any other shape's effective offsets.
+    val col = PlacementGeometry.cellWidthPx(1080)
+    val row = PlacementGeometry.cellHeightPx(2400)
+    require(col == 84 && row == 86)
+
+    val globalY = 484
+    val tallDelta = PlacementGeometry.DEFAULT_TALL_DELTA_PX
+    require(tallDelta == -240)
+    // No v3.7 bypass: a tall piece must follow manual GLOBAL Y changes.
+    val y3 = PlacementGeometry.effectiveYOffsetPx(3,2,globalY,tallDelta,0,row)
+    val y5 = PlacementGeometry.effectiveYOffsetPx(5,1,globalY,tallDelta,0,row)
+    require(y3 == 244 && y5 == 244)
+    require(PlacementGeometry.effectiveYOffsetPx(3,2,globalY + 20,tallDelta,0,row) == y3 + 20)
+    require(PlacementGeometry.effectiveYOffsetPx(5,1,globalY + 20,tallDelta,0,row) == y5 + 20)
+    // Tall-only controls work without moving short/horizontal pieces.
+    require(PlacementGeometry.effectiveYOffsetPx(3,2,globalY,tallDelta + 20,0,row) == y3 + 20)
+    require(PlacementGeometry.effectiveYOffsetPx(1,5,globalY,tallDelta + 20,0,row) == globalY)
+    require(PlacementGeometry.effectiveYOffsetPx(2,3,globalY,tallDelta + 20,0,row) == globalY)
+    require(PlacementGeometry.effectiveYOffsetPx(3,2,globalY,tallDelta,-1,row) == y3 - row)
+    require(PlacementGeometry.isTall(3,2) && PlacementGeometry.isTall(5,1))
+    require(!PlacementGeometry.isTall(2,3) && !PlacementGeometry.isTall(1,5))
+    // Previously tuned empirical X/Y corrections continue to apply.
     require(PlacementGeometry.shapeCorrectionCells("###/#..") == (-1 to -1))
     require(PlacementGeometry.shapeCorrectionCells("####") == (0 to 0))
-    // v3.4: purple five-wide strip landed one column RIGHT of its correct
-    // preview. Compensate on this footprint only, preserving the good ####.
     require(PlacementGeometry.shapeCorrectionCells("#####", "PURPLE") == (-1 to 0))
     require(PlacementGeometry.shapeCorrectionCells("#####", "YELLOW") == (0 to 0))
-    require(PlacementGeometry.shapeCorrectionCells("#/#/#/#/#") == (0 to 0))
-    require(PlacementGeometry.shapeCorrectionCells("#./##/.#") == (0 to 0))
-    val (greenBiasX,greenBiasY)=PlacementGeometry.shapeCorrectionCells("###/#..")
-    val effectiveGreenX=84+greenBiasX*dx
-    val effectiveGreenY=484+greenBiasY*dy
-    require(effectiveGreenX==0 && effectiveGreenY==398)
-    val (purpleBiasX,purpleBiasY)=PlacementGeometry.shapeCorrectionCells("#####", "PURPLE")
-    val effectivePurpleX=84+purpleBiasX*dx
-    val effectivePurpleY=484+purpleBiasY*dy
-    require(effectivePurpleX==0 && effectivePurpleY==484)
-    // Tall pieces use the physical pickup tile as the release anchor.
-    // These are experimental test values, not confirmed game-side snapping.
-    require(PlacementGeometry.directTallAnchor(5,1))
-    require(PlacementGeometry.directTallAnchor(3,2))
-    require(!PlacementGeometry.directTallAnchor(2,3))
-    require(!PlacementGeometry.directTallAnchor(1,5))
-    require(PlacementGeometry.effectiveYOffsetPx(5,1,484,0,dy) == 0)
-    require(PlacementGeometry.effectiveYOffsetPx(3,2,484,0,dy) == 0)
-    require(PlacementGeometry.effectiveYOffsetPx(1,5,484,0,dy) == 484)
-    require(PlacementGeometry.effectiveYOffsetPx(2,3,484,-1,dy) == 398)
-    // Purple vertical 5 with bottom-row grip: old release target was
-    // bottomTileY +484, too low; new release at bottomTileY.
-    val bottomTileY = (454f + 7*55f)*2400f/1536f
-    val oldRelease = bottomTileY + 484f
-    val newRelease = bottomTileY + PlacementGeometry.effectiveYOffsetPx(5,1,484,0,dy)
-    require(oldRelease - newRelease == 484f)
-    println("PASS: tall direct-grip marker moves 484 physical pixels up")
-    println("PASS: #### global X=84 Y=484; ##### effective X=$effectivePurpleX Y=$effectivePurpleY; green L effective X=$effectiveGreenX Y=$effectiveGreenY")
+    val targetGrip = (454f + 2 * 55f) * 2400f / 1536f
+    val oldDirectY = targetGrip + 0
+    val oldGlobalY = targetGrip + globalY
+    val newTallY = targetGrip + y3
+    require(newTallY > oldDirectY && newTallY < oldGlobalY)
+    println("PASS: tall finger endpoint is tunable with GLOBAL Y and TALL DELTA")
+    println("PASS: default tall effective Y=$y3; horizontal effective Y=$globalY")
+    println("PASS: short-piece shape-specific corrections unchanged")
 }

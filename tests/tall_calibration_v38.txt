@@ -1,0 +1,7 @@
+Blockbot v3.8 calibration / gesture diagnostic tests
+* Tall 3-high and 5-high effective Y offset starts at +244px for saved global Y=484, tall delta=-240.
+* Changing global Y by +20 moves tall and short release +20; no more forced Y=0.
+* Changing tall delta by +20 moves tall release +20 and does NOT move short/horizontal release.
+* Prior horizontal and green-L shape biases unchanged.
+* Preview marker and label both use gestureCoords(); last touch path saved in capture report after STOP.
+* Requires GitHub Actions to verify Android APK compilation; on-device calibration still experimental.

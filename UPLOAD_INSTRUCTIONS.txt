@@ -1,8 +1,1 @@
-Rock Block Bot v3.4
-1. Extract all files.
-2. Open GitHub Desktop -> Repository -> Show in Explorer.
-3. Copy the extracted project files into that folder and replace existing ones. Do not delete .git or .github.
-4. GitHub Desktop -> commit "v3.4 horizontal-strip capture geometry fix" -> Push origin.
-5. GitHub Actions -> Build Debug APK -> install APK if build succeeds.
-6. Share a single app (Rock Block Saga); PREVIEW must show all actual piece cells. Never move a wrong preview.
-7. After NEXT MOVE, wait at least 7 seconds for verification before pressing STOP. Send preview and final report screenshots.
+Rock Block Bot v3.8: unzip into your cloned GitHub Desktop repository (replace matching files, keep .git and .github), commit and Push origin, then download the Debug APK artifact from your GitHub Actions workflow. Install on phone and test PREVIEW first. SHOW CAL has global X/Y and separate TALL Y +/-; global Y now affects tall pieces as well. Default tall delta -240 px. Keep confirmation and do not retry an UNVERIFIED move blindly.
