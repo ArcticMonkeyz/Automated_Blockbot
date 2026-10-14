@@ -1,3 +1,11 @@
+# RockBlockBot v4.0 — vertical recognition and measured placement presets
+
+- Added vertical strip geometry check using physical tile width and lane coverage to prevent five-high strips being interpreted as six. Ambiguous six-high readings without reliable seams are rejected.
+- Added RED #### default release bias one row up; PURPLE #../### default bias one column left and one row up.
+- Preserved user-saved per-piece adjustments, tall calibration, existing horizontal presets, solver, and verification.
+- Do not move unless the preview exactly matches the visible piece. Green five-high needs on-device verification; offline tests do not prove Android capture performance.
+- Build the APK using the existing GitHub Actions workflow; complete Android build not run locally.
+
 # Rock Block Bot v3.9 — per-piece calibration
 
 Android guided puzzle solver for Rock Block Saga. Every gesture still requires your confirmation. **Not tested on the physical device yet; use controlled one-move trials.**

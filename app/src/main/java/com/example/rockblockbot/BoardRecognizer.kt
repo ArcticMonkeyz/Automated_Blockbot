@@ -344,6 +344,43 @@ object BoardRecognizer {
             rows.first() in knownFootprints,count,1,color.name)
     }
 
+    /** A vertical strip must agree with its physical width. The fallback pixel-fit
+     * previously split a five-tile green strip into six narrow phantom tiles.
+     * Reject ambiguous dimensions rather than inventing an extra tile.
+     */
+    private fun detectVerticalStrip(
+        image: Bitmap, zone: Zone, color: TileColor,
+        minX: Int, minY: Int, boxW: Int, boxH: Int,
+        xProfile: IntArray, pixelCount: Int
+    ): ObservedPiece? {
+        if (boxH < boxW * 2.4 || boxW !in 26..52) return null
+        val peak = xProfile.maxOrNull() ?: return null
+        if (peak < 40) return null
+        val threshold = peak * 0.63
+        val core = xProfile.indices.filter { xProfile[it] >= threshold }
+        if (core.isEmpty()) return null
+        val thickness = core.last() - core.first() + 1
+        if (thickness !in 25..48) return null
+        val count = (boxH.toDouble() / thickness).roundToInt()
+        if (count !in 3..6) return null
+        val pitch = boxH.toDouble() / count
+        if (pitch !in 29.0..49.0 || abs(pitch - thickness) > thickness * .16) return null
+        val lanePixels = IntArray(count)
+        for (y in 0 until boxH) for (x in core.first..core.last) {
+            if (matches(image.getPixel(zone.left + minX + x, zone.top + minY + y), color)) {
+                lanePixels[(y / pitch).toInt().coerceIn(0, count - 1)]++
+            }
+        }
+        if (lanePixels.any { it < thickness * pitch * .35 }) return null
+        val rows = List(count) { "#" }
+        return ObservedPiece(rows,
+            (zone.left + minX + (core.first + core.last) / 2f),
+            (zone.top + minY + boxH - pitch / 2f).toFloat(),
+            count - 1, 0, pitch.roundToInt(),
+            (lanePixels.sum().toDouble() / pixelCount).coerceIn(0.0, 1.0),
+            rows.joinToString("/") in knownFootprints, 1, count, color.name)
+    }
+
     private fun detectPiece(image:Bitmap,zone:Zone,color:TileColor?,pruneFringe:Boolean):ObservedPiece? {
         // The seed selects a color. The wider zone measures its FULL extent.
         // Different-color neighboring pieces can touch without merging.
@@ -480,6 +517,11 @@ object BoardRecognizer {
         // even when visual seams merge and bands() sees only one wide stripe.
         detectStraightStrip(image, zone, color, minX, minY, boxW,
             yProfile, pixelCount)?.let { return it }
+        detectVerticalStrip(image, zone, color, minX, minY, boxW, boxH,
+            xProfile, pixelCount)?.let { return it }
+        // A six-high interpretation of a narrow strip without visible vertical
+        // seams is unsafe. Do not let the fallback guess a sixth block.
+        val uncertainVertical = boxH > boxW * 3 && !validY && yb.size < 3
 
         // Fast, shape-preserving route: when both axes have clear tile seams,
         // their stripe centers are more reliable than a guessed tile pitch.
@@ -587,6 +629,7 @@ object BoardRecognizer {
             val gripCol=trimmed[gripRow].indexOf('#')
             val gx=zone.left+minX+(left+gripCol+.5f)*pitch
             val gy=zone.top+minY+(firstRow+gripRow+.5f)*pitch
+            if (uncertainVertical && trimmed.size >= 6 && trimmed.all { it == "#" }) continue
             val candidate=Candidate(trimmed,pitch,score,recall,gx,gy,gripRow,gripCol,known)
             if(best==null || candidate.score>best.score) best=candidate
         }

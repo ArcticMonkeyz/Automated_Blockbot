@@ -57,6 +57,10 @@ object PlacementGeometry {
         // newly observed yellow five-strip (previously cropped to four) landed
         // at the correct origin WITHOUT that shift. Avoid extrapolating.
         signature == "#####" && tileColor == "PURPLE" -> -1 to 0
+        // v3.9: RED four-wide landed exactly one row below preview.
+        signature == "####" && tileColor == "RED" -> 0 to -1
+        // v3.9: PURPLE four-cell L landed one column right and one row down.
+        signature == "#../###" && tileColor == "PURPLE" -> -1 to -1
         // v3.8 purple five-high vertical strip landed one column RIGHT and
         // one row UP. Use a color+shape-specific correction only for it.
         signature == "#/#/#/#/#" && tileColor == "PURPLE" -> -1 to 1
