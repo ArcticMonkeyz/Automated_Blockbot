@@ -24,6 +24,7 @@ import java.util.Date
 import java.util.Locale
 import java.util.concurrent.Executors
 import kotlin.math.abs
+import kotlin.math.roundToInt
 
 /** Guided multi-move placement: user must PREVIEW and confirm each move. */
 class CaptureService : Service() {
@@ -45,6 +46,7 @@ class CaptureService : Service() {
     private var preparing = false
     private var xOffset = 0
     private var yOffset = 400
+    private var lastPlacementCheck = "No confirmed placement yet."
     private data class Prepared(
         val frame: BoardRecognizer.Frame,
         val move: Move,
@@ -60,6 +62,7 @@ class CaptureService : Service() {
     private var stableCount = 0
     private var inProgress = false
     private var moveCount = 0
+    private var verifiedThisSession = 0
     private var sessionBlocked = false
     private var lastGestureOutcome = "Not tested in this session"
     private var status = "Waiting for an active game board."
@@ -76,9 +79,10 @@ class CaptureService : Service() {
     private fun publish() {
         val f = latest
         val time = if (latestAt > 0) SimpleDateFormat("HH:mm:ss",Locale.US).format(Date(System.currentTimeMillis() - (SystemClock.elapsedRealtime()-latestAt))) else "none"
-        val text = "Status: $status\nCalibration: X ${xOffset}px, Y ${yOffset}px\nLast gesture result: $lastGestureOutcome\nLast game frame: $time | stable frames: $stableCount\n\n" +
+        val text = "Status: $status\nCalibration: X ${xOffset}px, Y ${yOffset}px\nLast gesture result: $lastGestureOutcome\nLast placement check: $lastPlacementCheck\nLast game frame: $time | stable frames: $stableCount\n\n" +
             (f?.report() ?: "No game board captured yet.") + "\n\nUser-confirmed moves only. STOP removes floating controls."
-        getSharedPreferences("capture",MODE_PRIVATE).edit().putString("report",text).apply()
+        getSharedPreferences("capture",MODE_PRIVATE).edit()
+            .putString("report",text).putString("placementCheck",lastPlacementCheck).apply()
     }
     private fun setStatus(s: String) { status=s; publish() }
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -90,8 +94,27 @@ class CaptureService : Service() {
             .setSmallIcon(android.R.drawable.ic_menu_view).setOngoing(true).build()
         startForeground(22,notification,ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
         val prefs = getSharedPreferences("calibration", MODE_PRIVATE)
-        xOffset = prefs.getInt("x", 0)
-        yOffset = prefs.getInt("y", 400)
+        lastPlacementCheck = getSharedPreferences("capture",MODE_PRIVATE)
+            .getString("placementCheck", "No confirmed placement yet.") ?: "No confirmed placement yet."
+        // v2.9 successfully picked up the green four-strip, but in the observed
+        // board test it landed one COLUMN left and one ROW above the preview.
+        // Shift the *finger release*, not the planned board cells or pickup.
+        // Migrate once, including when installing over existing saved 0/+400
+        // calibration. Never stack this adjustment on subsequent app starts.
+        if (!prefs.getBoolean("placementGridCorrectionV30", false)) {
+            @Suppress("DEPRECATION")
+            val display = (getSystemService(WINDOW_SERVICE) as WindowManager).defaultDisplay
+            val size = Point().also { display.getRealSize(it) }
+            xOffset = (prefs.getInt("x", 0) + PlacementGeometry.cellWidthPx(size.x))
+                .coerceIn(-400,400)
+            yOffset = (prefs.getInt("y", 400) + PlacementGeometry.cellHeightPx(size.y))
+                .coerceIn(-500,900)
+            prefs.edit().putInt("x",xOffset).putInt("y",yOffset)
+                .putBoolean("placementGridCorrectionV30",true).apply()
+        } else {
+            xOffset = prefs.getInt("x", 0)
+            yOffset = prefs.getInt("y", 400)
+        }
         val data = if (Build.VERSION.SDK_INT >= 33) intent.getParcelableExtra("data",Intent::class.java)
                    else @Suppress("DEPRECATION") (intent.getParcelableExtra("data") as? Intent)
         if (data == null) { setStatus("Missing screen-capture permission."); stopSelf(); return START_NOT_STICKY }
@@ -154,6 +177,11 @@ class CaptureService : Service() {
         actions.addView(moveButton)
         actions.addView(Button(this).apply { text = "STOP"; setOnClickListener { stopSelf() } })
         panel.addView(actions)
+        panel.addView(Button(this).apply {
+            text = "RESUME 1/2 PIECES (only if already placed one or two)"
+            textSize = 11f
+            setOnClickListener { resumePartialTray() }
+        })
         val adjustments = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         fun adjustButton(label: String, dx: Int, dy: Int) {
             adjustments.addView(Button(this).apply {
@@ -189,8 +217,8 @@ class CaptureService : Service() {
 
     private fun adjust(dx: Int, dy: Int) {
         if (inProgress || sessionBlocked) return
-        xOffset = (xOffset + dx).coerceIn(-240,240)
-        yOffset = (yOffset + dy).coerceIn(-400,400)
+        xOffset = (xOffset + dx).coerceIn(-400,400)
+        yOffset = (yOffset + dy).coerceIn(-500,900)
         getSharedPreferences("calibration",MODE_PRIVATE).edit()
             .putInt("x",xOffset).putInt("y",yOffset).apply()
         updateOffsetLabel()
@@ -213,7 +241,9 @@ class CaptureService : Service() {
         val fromX = plan.observed.gripX * sx
         val fromY = plan.observed.gripY * sy
         val toX = (163f + (plan.move.col + plan.observed.gripCol)*55f) * sx + xOffset
-        // The +400px vertical finger offset is the measured on-device default.
+        // The legacy +400 calibration was one row short with a leftmost-tile
+        // grip. Version 3.0 migrates the saved X/Y endpoint bias once; the
+        // board-preview geometry remains untouched.
         val toY = (454f + (plan.move.row + plan.observed.gripRow)*55f) * sy + yOffset
         return floatArrayOf(fromX,fromY,toX,toY)
     }
@@ -248,6 +278,26 @@ class CaptureService : Service() {
         marker = null
     }
 
+
+    /** Resuming an old game/session with only 1-2 physical tray pieces left is
+     * a deliberate user action; never assume missing detections mean a used slot.
+     */
+    private fun resumePartialTray() {
+        if (preparing || inProgress || sessionBlocked || prepared != null) {
+            setStatus("Cannot resume while a move is prepared or running. STOP if unsure.")
+            return
+        }
+        val frame = latest
+        if (frame == null || frame.recognized !in 1..2 || stableCount < 2 ||
+            SystemClock.elapsedRealtime()-latestAt > 4000L) {
+            setStatus("Resume requires a recent stable board with exactly 1 or 2 visible pieces.")
+            return
+        }
+        moveCount = 3 - frame.recognized
+        setStatus("PARTIAL TRAY: ${frame.recognized} detected; resume enabled for this session. " +
+            "Confirm that ONLY ${frame.recognized} pieces really remain in the tray. " +
+            "If another visible piece is missing from detection, STOP. Otherwise tap PREVIEW.")
+    }
     private fun prepareMove() {
         if (preparing || inProgress || sessionBlocked) return
         prepared = null
@@ -352,20 +402,25 @@ class CaptureService : Service() {
                 fun verify() {
                     if (stopped) return
                     val actual = latest
-                    val recent = SystemClock.elapsedRealtime() - latestAt < 2000L
+                    // An image captured *during* the drag is not proof of the
+                    // board after release. Require a settled post-release frame.
+                    val recent = latestAt >= verificationStarted + 350L &&
+                        SystemClock.elapsedRealtime() - latestAt < 2000L
                     val pieceRemoved = actual?.pieces?.get(plan.move.pieceIndex) == null
                     val lastPiece = plan.frame.recognized == 1
                     val boardMatched = actual?.board == plan.expected
                     if (recent && stableCount >= 2 && boardMatched && (pieceRemoved || lastPiece)) {
                         moveCount++
-                        finish("VERIFIED: Move $moveCount placed successfully. " +
+                        verifiedThisSession++
+                        finish("VERIFIED: Move $verifiedThisSession this session placed successfully. " +
                             "Tap PREVIEW for the next piece (manual confirmation required).")
                         return
                     }
-                    if (SystemClock.elapsedRealtime() - verificationStarted > 4800L) {
+                    if (SystemClock.elapsedRealtime() - verificationStarted > 6000L) {
                         sessionBlocked = true
-                        val diagnosis = actual?.let { displacementReport(plan, it.board) }
-                            ?: "No fresh game frame available."
+                        val diagnosis = if (recent && actual != null)
+                            displacementReport(plan, actual.board)
+                            else "No settled post-release game frame was captured."
                         finish("UNVERIFIED: $diagnosis STOP and inspect game. " +
                             "No further moves this session.")
                     } else handler.postDelayed({ verify() }, 400L)
@@ -408,8 +463,8 @@ class CaptureService : Service() {
             }
             if (valid && shifted == actualAdded && (dx != 0 || dy != 0)) {
                 val screen = screenSize()
-                val suggestedX = (xOffset - dx * 55f * screen.x / BoardRecognizer.REF_WIDTH).toInt()
-                val suggestedY = (yOffset - dy * 55f * screen.y / BoardRecognizer.REF_HEIGHT).toInt()
+                val suggestedX = xOffset - dx * PlacementGeometry.cellWidthPx(screen.x)
+                val suggestedY = yOffset - dy * PlacementGeometry.cellHeightPx(screen.y)
                 return "Piece landed ${dx} columns, ${dy} rows from preview. " +
                     "Suggested next-test offsets: X=$suggestedX, Y=$suggestedY (not applied)."
             }
@@ -418,6 +473,7 @@ class CaptureService : Service() {
     }
 
     private fun finish(message: String) {
+        lastPlacementCheck = message
         inProgress=false
         // Every move requires a fresh preview and explicit NEXT MOVE tap.
         moveButton?.isEnabled=false

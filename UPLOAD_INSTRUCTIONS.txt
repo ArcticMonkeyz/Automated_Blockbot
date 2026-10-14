@@ -1,13 +1,14 @@
-Rock Block Bot v2.9 - PC update
+Rock Block Bot v3.0 - Placement alignment test
 
-1. Extract the ZIP.
-2. In GitHub Desktop: Repository > Show in Explorer.
-3. Copy all files and folders INSIDE this extracted folder to the cloned repository.
-4. Replace existing matching files. Keep .git and .github folders.
-5. Commit summary: Blockbot v2.9 independent tile recognition
-6. Push origin, then wait for GitHub Actions to build the debug APK.
-7. Download APK artifact, extract app-debug.apk, and install it.
+1. Extract RockBlockBot-v3.0-placement-alignment.zip.
+2. In GitHub Desktop select your Automated_Blockbot repository.
+3. Repository -> Show in Explorer (opens the cloned repo directory).
+4. Copy the extracted source files into that existing directory. Replace matching files.
+5. Do not delete .git or .github (the existing build workflow lives there).
+6. Commit: Blockbot v3.0 placement alignment calibration
+7. Push origin and use the APK from the GitHub Actions build artifact.
+8. Open the updated app, share only Rock Block Saga, and check X/Y are auto-corrected.
+9. PREVIEW first; one NEXT MOVE only if the preview is accurate. Send landed-piece screenshot and Last placement check.
+10. If the game has only 1-2 real unused pieces because of the previous test, tap RESUME 1/2 PIECES before preview.
 
-On phone: Start capture; Share a single app > Rock Block Saga; PREVIEW.
-Check ALL preview cells match the real piece. Do not press NEXT MOVE if not.
-This source ZIP is NOT an APK, and it has not been tested on an Android phone.
+The new one-cell offset is a test correction based on one observed placement.

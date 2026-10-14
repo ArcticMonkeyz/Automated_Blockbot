@@ -1,0 +1,13 @@
+Placement discrepancy observed in Pixel 7 Pro screenshots (v2.9):
+  Intended: horizontal green #### at board row 2, columns 2-5 (1-based)
+  Reported landed: horizontal green #### at row 1, columns 1-4
+  Difference: -1 column, -1 row relative to preview
+  User confirmed piece was actually placed.
+
+Resulting v3.0 release calibration:
+  X_new = X_old + round(55 * realDisplayWidth / 709)
+  Y_new = Y_old + round(55 * realDisplayHeight / 1536)
+  Reference device display 1080 x 2400 => +84px X, +86px Y.
+  Saved old (0,+400) => new (84,+486), migrated one time only.
+
+No automatic gesture retry. Green preview geometry remains unchanged. Android physical test pending.

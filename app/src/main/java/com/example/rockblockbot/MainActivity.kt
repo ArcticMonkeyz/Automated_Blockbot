@@ -32,8 +32,8 @@ class MainActivity : Activity() {
         fun button(value: String, fn: () -> Unit) {
             layout.addView(Button(this).apply { text=value; setOnClickListener { fn() } })
         }
-        label("Rock Block Bot v2.9 — guided placement test",22f)
-        label("1. Allow floating controls and enable Rock Block Bot accessibility service. 2. Start capture; choose Rock Block Saga under SHARE A SINGLE APP (preferred). Entire screen may also work. 3. Switch to Rock Block Saga with all three pieces visible. 4. Tap PREVIEW to see the planned cells and finger endpoint. The default is X=0, Y=+400. Use X/Y adjustments in 20px steps. Preview shows every detected cell and a pickup marker on the lowest occupied tile row; do not press NEXT MOVE if the shape is wrong. 5. Tap NEXT MOVE only when ready. After a verified placement, tap PREVIEW again. If any shape has the wrong block count, do NOT move. No unattended play.")
+        label("Rock Block Bot v3.0 — placement alignment test",22f)
+        label("1. Allow floating controls and enable Rock Block Bot accessibility service. 2. Start capture; choose Rock Block Saga under SHARE A SINGLE APP (preferred). Entire screen may also work. 3. Switch to Rock Block Saga with all three pieces visible. 4. Tap PREVIEW to see the planned cells and finger endpoint. v3.0 corrects the finger release one board cell right/down from v2.9, preserving saved calibration. Use X/Y adjustments in 20px steps if a later verified report indicates displacement. Preview shows every detected cell and a pickup marker on the lowest occupied tile row; do not press NEXT MOVE if the shape is wrong. 5. Tap NEXT MOVE only when ready. After a verified placement, tap PREVIEW again. After STOP, read the Last placement check line in the game report. If any shape has the wrong block count, do NOT move. No unattended play.")
         button("Allow floating controls") {
             startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,Uri.parse("package:$packageName")))
         }
