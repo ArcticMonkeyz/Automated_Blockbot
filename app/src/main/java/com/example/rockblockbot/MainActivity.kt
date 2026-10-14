@@ -32,19 +32,24 @@ class MainActivity : Activity() {
         fun button(value: String, fn: () -> Unit) {
             layout.addView(Button(this).apply { text=value; setOnClickListener { fn() } })
         }
-        label("Rock Block Bot v4.3 — individual tile recognition",22f)
-        label("1. Enable overlay/accessibility, then SHARE A SINGLE APP: Rock Block Saga. " +
-            "2. PREVIEW with all real tray pieces recognized, and compare the entire shape and green squares. " +
-            "3. Open SHOW CAL: global X/Y affect all pieces; TALL Y adjusts all tall pieces; " +
-            "PIECE X/Y adjusts ONLY the currently previewed shape+color. Per-piece settings are saved " +
-            "across sessions. An empirically measured correction is preloaded for the purple five-high strip, " +
-            "while the previously successful yellow L calibration is preserved. " +
-            "4. Check the blue pickup ring, red release crosshair and exact coordinates; press NEXT MOVE " +
-            "only if the shape and target are correct. Wait at least 8 seconds for VERIFIED/UNVERIFIED " +
-            "in the floating overlay. If UNVERIFIED, do not retry blindly. " +
-            "5. STOP then inspect Last placement check. Unexpected line clears can now be diagnosed " +
-            "as a piece-specific offset suggestion; suggestions are NOT applied automatically. " +
-            "Do not use RESUME if all three real pieces are visible. No unattended play.")
+        label("Rock Block Bot v4.4 — shadow-guided drag (TRIAL)",22f)
+        label("1. Enable floating overlay/accessibility, then SHARE A SINGLE APP: Rock Block Saga. " +
+            "2. PREVIEW with all tray pieces recognized. Confirm the entire shape, numbered " +
+            "source tiles, and GREEN planned board cells. The red crosshair is only the FIRST " +
+            "GUESS for the finger, not the game drop position. " +
+            "3. NEXT MOVE holds the virtual finger down, looks for the game's TRANSLUCENT " +
+            "same-color placement shadow, adjusts the held drag until that shadow matches " +
+            "the planned green cells in two separate captures, THEN releases and checks the board. " +
+            "The bot does not intentionally release at an unverified guess. If tracking fails, " +
+            "it attempts to return the piece to the tray and BLOCKS further moves. " +
+            "4. Be patient: a move can take up to about 20 seconds for several corrections " +
+            "plus 7 seconds for final verification. Do not touch the game during a test. " +
+            "STOP during a held drag requests a return-to-tray; press STOP again after it finishes. " +
+            "5. If VERIFIED, PREVIEW again before each NEXT MOVE. If UNVERIFIED, STOP and send " +
+            "Last game shadow tracking and Last placement check. " +
+            "Keep existing per-piece calibration unless needed for the first guess. " +
+            "This is EXPERIMENTAL: game ghosts may be occluded, colors vary, Android may " +
+            "interrupt held gestures, and tray return is best-effort only. No unattended play.")
         button("Allow floating controls") {
             startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,Uri.parse("package:$packageName")))
         }

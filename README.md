@@ -1,33 +1,37 @@
-# RockBlockBot v4.3 - individual tile-center recognition
+# RockBlockBot v4.4 — Live game-shadow guided placement (experimental)
 
-This is a **guided test build**, not guaranteed hands-free placement. It preserves the survival solver and the existing movement/per-piece calibration system. The Android APK must be built in GitHub Actions.
+**Research/test update. Not a guarantee of accurate placement.** The v4.3 source-tile recognition, solver, preview, and per-piece saved calibration have been retained. The movement controller has been replaced with a serial held-touch visual-feedback controller.
 
 ## What changed
 
-1. **One detector for horizontal, vertical, and irregular pieces.** The primary recognizer builds an image-color mask for each tray slot, samples each proposed square's **interior** independently, finds its center, and checks the dark seam between every pair of neighboring occupied tiles. It considers competing grid sizes (for example purple vertical **three** versus phantom **four**) and chooses a well-supported explanation. No shape-library whitelist is needed.
-2. **Overlaid source-tile markers.** During PREVIEW, cyan **numbered rings 1, 2, 3, ...** show precisely which squares were counted in the selected piece. Green squares still indicate the planned board placement; blue ring marks pickup, red crosshair marks release. The new markers appear **only if the individual-tile detector succeeded**. A legacy fallback might have no numbered rings: examine its shape carefully.
-3. **Visible error text.** PREVIEW requires three identical analyzed frames, and if it cannot find all visible pieces, the floating controls display the block reason rather than seeming unresponsive. Do not bypass this by pressing RESUME when all three physical pieces are present.
-4. **Stronger ambiguity protection.** Each candidate must cover essentially all visible colored pixels, form an orthogonally connected shape, and be supported by real tile seams. If the new method cannot verify it, existing conservative recognition checks still apply.
+- When you press NEXT MOVE, the bot starts an accessibility gesture with `willContinue=true` instead of releasing on its first guessed endpoint.
+- While the finger stays down, MediaProjection samples actual **game-produced translucent placement shadows**. The overlay is hidden during tracking so it does not contaminate image analysis.
+- The shadow detector uses the **detected piece color** (red/green/blue/purple/yellow), ignores previously occupied board cells, and compares candidate shadow *footprints* to the solver's target coordinates (the same grid cells displayed as green during PREVIEW).
+- It only calls `releaseHeldDrag` after **two separate, sufficiently confident held-shadow observations** match the target. When the ghost is at another valid placement, it corrects the held pointer by up to two board cells and checks again.
+- An initial missing shadow triggers a limited search toward the board centre. Tracking stops after at most five corrections or 18 seconds. It then **attempts to drag back to the tray and release there**. Android may still cancel unexpectedly, so return is **not guaranteed**.
+- STOP pressed during a gesture requests a safe return-to-tray; after it finishes, press STOP again to remove the controls. The app still requires a fresh user-confirmed PREVIEW before each move; no unattended play.
+- New report line **Last game shadow tracking** describes color, measured position, confidence, and tracking failures. After an aligned release, the post-release board is still independently checked.
 
-Nothing here changes the drag offsets, saved per-color/per-shape calibrations, or strategic solver. Some shapes still take the legacy recognition path, and physical on-phone results **must be verified**.
+## Critical limitation
 
-## Install and first test
+Only a screenshot of a partially occluded **red** placement shadow has been supplied; ghosts in other colors and different states have **not yet been verified on a running device**. The detector's five-color thresholds currently use general color characteristics and synthetic tests. A lifted solid tile may obscure too many ghost cells, in which case the tracker deliberately refuses to release and attempts a return. The game or Android may cancel ongoing touches. Do not rely on this for high-stakes or unattended automation.
 
-1. Extract this ZIP to your PC.
-2. In **GitHub Desktop -> Repository -> Show in Explorer**, copy the **contents** of this extracted folder into the existing repository, replacing matching project files. Keep hidden `.git` and `.github` directories unchanged.
-3. Commit, push, and download the new **debug APK** produced by your existing GitHub Actions build workflow.
-4. Install over the previous app. Start capture using **Share a single app -> Rock Block Saga**.
-5. With three actual tray pieces visible, press PREVIEW **without RESUME**. Verify the piece count, shape, and **numbered tile rings** before NEXT MOVE. Do **not** move a misrecognized piece. If recognition still fails, STOP and send the report/screenshot.
-6. If you test a placement, wait about 8-10 seconds for VERIFIED/UNVERIFIED; never continue an unverified sequence.
+## Install & safe first test
 
-Saved calibration defaults are unchanged (previously X=+84 px, Y=+484 px, tall delta=-240 px unless you modified them). Correct identification **does not prove accurate placement**: the game's finger-to-piece lift behavior remains experimental.
+1. Extract ZIP; copy this folder's **contents** to your existing GitHub Desktop repo. Keep hidden `.git` and `.github` untouched. Push changes and build debug APK using GitHub Actions.
+2. Install over your current app; use **Share a single app > Rock Block Saga**.
+3. PREVIEW. All three pieces must be recognized if all are present. Inspect numbered source tile rings and **green target squares**. Do not NEXT MOVE for an inaccurate shape.
+4. NEXT MOVE once. Wait up to **30 seconds** while it holds, scans, adjusts and verifies. DO NOT manually drag another piece during this time.
+5. If the game shadow cannot be confidently tracked, the app should attempt to return the piece to the tray and show UNVERIFIED. If that happens, STOP and send the status and **Last game shadow tracking** report. Do not use RESUME to skip an unidentified piece.
+6. If VERIFIED, PREVIEW before NEXT MOVE again.
 
-## Local validation
+Your old saved X/Y and per-piece calibrations are retained as **first-guess positioning only**; they no longer authorize unconditional release.
 
-- The recognizer compiled with Kotlin and a host `Bitmap` substitute.
-- Against 94 prior screenshots, its shape output differed in only one previously missing purple 5-block case; the purple vertical **3**, blue **T**, red **3x3**, green **5**, and touching yellow/green pieces retained their expected shapes.
-- Against 22 PNG/JPEG/blur/stretched/rescaled diagnostic variants of the purple-3 frame, the purple shape stayed correct in 21 variants, and it **rejected** the most extreme vertical stretch rather than inventing another square. It also recognized a synthetic horizontal 3-tile example.
-- Local per-piece calibration/placement diagnostics tests pass.
-- The **full Android Gradle build and physical capture** have not been run locally. Screen-capture visuals can differ from the user's screenshots.
+## Validation performed
 
-The host image runner is provided in `tests/RunScreenshotRecognition.sh` for reproducible tests with image paths passed as arguments (requires a JDK and `kotlinc`). The screenshot assets themselves are **not bundled**.
+- Host-compiled `ShadowTracker.kt` and tested synthetic color shadows, varied shapes (horizontal, vertical, L, T, square, five-high), wrong-position detection and missing-shadow refusal.
+- Verified the supplied partially occluded held-red example is **not incorrectly authorized** as a high-confidence placement.
+- Host-compiled the new continued-touch `TouchService.kt` against Android API signature stand-ins.
+- Existing recognizer and calibration tests are packaged unchanged; the full Android build and live touch/capture synchronization **must be tested through your GitHub Actions build and phone**.
+
+This design is based on standard visual servoing: the target is the bot's planned green board footprint, but the feedback signal is **the game's actual predicted landing shadow**, rather than the raised solid tile.

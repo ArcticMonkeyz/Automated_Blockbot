@@ -54,6 +54,7 @@ class CaptureService : Service() {
     private var shapeCalibrationRow: LinearLayout? = null
     private var lastTouchPath = "No gesture dispatched yet."
     private var lastPlacementCheck = "No confirmed placement yet."
+    private var lastShadowTracking = "Not tested in this session"
     private data class Prepared(
         val frame: BoardRecognizer.Frame,
         val move: Move,
@@ -68,6 +69,18 @@ class CaptureService : Service() {
     private var stableSignature: String? = null
     private var stableCount = 0
     private var inProgress = false
+    private data class TrackingMove(val plan: Prepared, val pickupX: Float, val pickupY: Float,
+        var fingerX: Float, var fingerY: Float, var corrections: Int = 0,
+        var aligned: Int = 0, var blindReads: Int = 0, var probes: Int = 0,
+        val startAt: Long = SystemClock.elapsedRealtime())
+    private var tracking: TrackingMove? = null
+    @Volatile private var shadowTarget: ShadowTracker.Target? = null
+    private var shadowSample: ShadowTracker.Match? = null
+    private var shadowDiagnostic: String = "No live game-shadow scan yet"
+    private var shadowSampleAt: Long = 0L
+    private var shadowFrames = 0
+    private var pendingAbortReason: String? = null
+
     private var moveCount = 0
     private var verifiedThisSession = 0
     private var sessionBlocked = false
@@ -86,7 +99,7 @@ class CaptureService : Service() {
     private fun publish() {
         val f = latest
         val time = if (latestAt > 0) SimpleDateFormat("HH:mm:ss",Locale.US).format(Date(System.currentTimeMillis() - (SystemClock.elapsedRealtime()-latestAt))) else "none"
-        val text = "Status: $status\nCalibration: X ${xOffset}px, Y ${yOffset}px, Tall delta ${tallDelta}px, Tall Y ${yOffset + tallDelta}px\nLast gesture result: $lastGestureOutcome\nLast touch path: $lastTouchPath\nLast placement check: $lastPlacementCheck\nLast game frame: $time | stable frames: $stableCount\n\n" +
+        val text = "Status: $status\nCalibration: X ${xOffset}px, Y ${yOffset}px, Tall delta ${tallDelta}px, Tall Y ${yOffset + tallDelta}px\nLast gesture result: $lastGestureOutcome\nLast touch path: $lastTouchPath\nLast game shadow tracking: $lastShadowTracking\nLast placement check: $lastPlacementCheck\nLast game frame: $time | stable frames: $stableCount\n\n" +
             (f?.report() ?: "No game board captured yet.") + "\n\nUser-confirmed moves only. STOP removes floating controls."
         getSharedPreferences("capture",MODE_PRIVATE).edit()
             .putString("report",text).putString("placementCheck",lastPlacementCheck)
@@ -102,7 +115,7 @@ class CaptureService : Service() {
         publish()
     }
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == "STOP") { stopSelf(); return START_NOT_STICKY }
+        if (intent?.action == "STOP") { requestStop(); return START_NOT_STICKY }
         if (intent?.action != "START" || projection != null) return START_NOT_STICKY
         val notification = Notification.Builder(this,"capture")
             .setContentTitle("Rock Block Bot: guided moves")
@@ -152,7 +165,9 @@ class CaptureService : Service() {
                 val image = source.acquireLatestImage() ?: return@setOnImageAvailableListener
                 try {
                     val now = SystemClock.elapsedRealtime()
-                    if (now-lastAnalyzed < 700L || captureFrozen) return@setOnImageAvailableListener
+                    val track = shadowTarget
+                    if (now-lastAnalyzed < (if (track != null) 270L else 700L) ||
+                        (captureFrozen && track == null)) return@setOnImageAvailableListener
                     lastAnalyzed=now
                     val plane=image.planes[0]
                     val stride=plane.pixelStride
@@ -162,13 +177,24 @@ class CaptureService : Service() {
                         plane.buffer.rewind(); bmp.copyPixelsFromBuffer(plane.buffer)
                         val cropped=Bitmap.createBitmap(bmp,0,0,w,h)
                         try {
-                            val frame=BoardRecognizer.analyze(cropped)
-                            if (frame!=null) handler.post {
-                                if (stopped || (prepared != null && !inProgress)) return@post
-                                latest=frame; latestAt=now
-                                if (frame.signature==stableSignature) stableCount++
-                                else { stableSignature=frame.signature; stableCount=1 }
-                                if (!inProgress) publish()
+                            if (track != null) {
+                                val scan = ShadowTracker.inspect(w,h,{ x,y -> cropped.getPixel(x,y) },track)
+                                handler.post {
+                                    if (stopped || shadowTarget !== track) return@post
+                                    shadowSample=scan.match
+                                    shadowDiagnostic=scan.diagnostic
+                                    shadowSampleAt=now
+                                    shadowFrames++
+                                }
+                            } else {
+                                val frame=BoardRecognizer.analyze(cropped)
+                                if (frame!=null) handler.post {
+                                    if (stopped || (prepared != null && !inProgress)) return@post
+                                    latest=frame; latestAt=now
+                                    if (frame.signature==stableSignature) stableCount++
+                                    else { stableSignature=frame.signature; stableCount=1 }
+                                    if (!inProgress) publish()
+                                }
                             }
                         } finally { cropped.recycle() }
                     } finally { bmp.recycle() }
@@ -195,7 +221,7 @@ class CaptureService : Service() {
         moveButton = Button(this).apply { text = "NEXT MOVE"; isEnabled = false; setOnClickListener { attemptOneMove() } }
         actions.addView(previewButton)
         actions.addView(moveButton)
-        actions.addView(Button(this).apply { text = "STOP"; setOnClickListener { stopSelf() } })
+        actions.addView(Button(this).apply { text = "STOP"; setOnClickListener { requestStop() } })
         panel.addView(actions)
         // Keep the board unobstructed: the former always-visible resume and
         // calibration rows reached the first board row on this phone.
@@ -505,104 +531,274 @@ class CaptureService : Service() {
         }
     }
 
+    /** Next move is now CLOSED LOOP: the game's colored placement ghost must
+     * match the green planned footprint in two separate settled held frames.
+     * The old release coordinate is a FIRST GUESS only; it is never released
+     * without visual confirmation. Fallback is a tray-return attempt.
+     */
     private fun attemptOneMove() {
         if (inProgress || sessionBlocked) return
-        val plan = prepared ?: run { setStatus("Tap PREVIEW first."); return }
-        if (TouchService.current == null) {
-            setStatus("Enable the accessibility service before NEXT MOVE."); return
+        val plan=prepared ?: run {setStatus("Tap PREVIEW first.");return}
+        val touch=TouchService.current ?: run {
+            setStatus("Enable the accessibility service before NEXT MOVE.");return
         }
-        // Refuse stale previews and mismatched shapes rather than making a blind move.
-        if (plan.piece.normalized.size != plan.observed.count) {
-            sessionBlocked = true
-            finish("Piece shape count mismatch. STOP; no move made.")
+        if (plan.piece.normalized.size!=plan.observed.count ||
+            plan.observed.tileCenters.size!=plan.observed.count) {
+            sessionBlocked=true
+            finish("UNVERIFIED: Individual tile count incomplete; no move made.")
             return
         }
-        if (SystemClock.elapsedRealtime()-plan.time > 30000L) {
-            prepared = null; captureFrozen = false
-            moveButton?.isEnabled = false; removeMarker()
-            setStatus("Preview expired after 30 seconds. Wait for a new frame, then PREVIEW again.")
+        if(SystemClock.elapsedRealtime()-plan.time>30000L) {
+            prepared=null;captureFrozen=false;moveButton?.isEnabled=false;removeMarker()
+            setStatus("Preview expired. Wait for a fresh frame and PREVIEW again.")
             return
         }
-        val coords = gestureCoords(plan)
-        val screen = screenSize()
-        if (coords[0] !in 0f..screen.x.toFloat() || coords[1] !in 0f..screen.y.toFloat() ||
-            coords[2] !in 0f..screen.x.toFloat() || coords[3] !in 0f..screen.y.toFloat()) {
-            setStatus("Drag would leave the screen. Adjust X/Y or TALL Y, then check the preview."); return
-        }
-        // Hard safety limit: refuse release points beyond the board edge.
-        // Reference board centers run x=163..548, y=454..839; one half-cell
-        // margin allows a little touch imprecision without off-board drags.
-        val boardLeft = (163f - 27.5f) * screen.x / BoardRecognizer.REF_WIDTH
-        val boardRight = (548f + 27.5f) * screen.x / BoardRecognizer.REF_WIDTH
-        val boardTop = (454f - 27.5f) * screen.y / BoardRecognizer.REF_HEIGHT
-        val boardBottom = (839f + 27.5f) * screen.y / BoardRecognizer.REF_HEIGHT
-        if (coords[2] !in boardLeft..boardRight || coords[3] !in boardTop..boardBottom) {
-            setStatus("BLOCKED: finger release (${coords[2].toInt()},${coords[3].toInt()}) " +
-                "is outside board limits. Do not move; inspect grip/lift calibration.")
+        val screen=screenSize()
+        val coordinates=gestureCoords(plan)
+        if(coordinates.any{ it<12f } || coordinates[0]>=screen.x-12f || coordinates[1]>=screen.y-12f ||
+            coordinates[2]>=screen.x-12f || coordinates[3]>=screen.y-12f) {
+            setStatus("BLOCKED: Initial pointer path would leave the screen. No move attempted.")
             return
         }
-        inProgress = true
-        captureFrozen = false
-        moveButton?.isEnabled = false
-        previewButton?.isEnabled = false
-        removeMarker()
-        prepared = null
-        shapeLabel?.text = "Moving one piece. Wait for verification."
-        lastGestureOutcome = "Waiting for Android gesture result"
-        lastTouchPath = "Piece ${plan.move.pieceIndex+1} ${plan.observed.signature}: " +
-            "pickup (${coords[0].toInt()},${coords[1].toInt()}) -> " +
-            "release (${coords[2].toInt()},${coords[3].toInt()}) screen px, " +
-            "global X=$xOffset Y=$yOffset, tall delta=$tallDelta, " +
-            "piece extra=${pieceAdjustment(plan.observed)}; effective=${effectiveOffsets(plan,screen)}"
-        lastPlacementCheck = "PENDING: Drag started; awaiting settled post-release game frame."
-        shapeCalibrationLabel?.text = "Current move: awaiting settled frame (6-8 seconds)."
-        setStatus("Testing piece ${plan.move.pieceIndex+1} at row ${plan.move.row+1}, " +
-            "col ${plan.move.col+1}; endpoint (${coords[2].toInt()}, ${coords[3].toInt()}).")
-        val accepted = TouchService.current?.dragWithHold(coords[0],coords[1],coords[2],coords[3]) { success,detail ->
+        val t=TrackingMove(plan,coordinates[0],coordinates[1],coordinates[2],coordinates[3])
+        inProgress=true
+        captureFrozen=false
+        prepared=null
+        removeMarker() // Remove our own green overlay from the image being measured.
+        moveButton?.isEnabled=false
+        previewButton?.isEnabled=false
+        tracking=t
+        pendingAbortReason=null
+        shadowSample=null;shadowSampleAt=0;shadowFrames=0
+        shadowDiagnostic="Waiting for first live shadow sample"
+        shadowTarget=ShadowTracker.Target(plan.frame.board,plan.piece.normalized,
+            plan.move.row,plan.move.col,plan.observed.tileColor)
+        lastGestureOutcome="Holding pointer; waiting for game's placement shadow"
+        lastTouchPath="Piece ${plan.move.pieceIndex+1} ${plan.observed.signature}: " +
+            "pickup (${coordinates[0].toInt()},${coordinates[1].toInt()}); " +
+            "first guess (${coordinates[2].toInt()},${coordinates[3].toInt()}); " +
+            "closed-loop shadow tracking, no blind release"
+        lastPlacementCheck="PENDING: Tracking game placement shadow before release."
+        lastShadowTracking="Waiting for live translucent ${plan.observed.tileColor} placement ghost."
+        shapeLabel?.text="Holding piece. Tracking the game's colored placement shadow..."
+        setStatus("Closed-loop drag: only release after game ghost matches planned cells.")
+        val started=touch.beginHeldDrag(t.pickupX,t.pickupY,t.fingerX,t.fingerY) { ok,why ->
             handler.post {
-                if (stopped) return@post
-                lastGestureOutcome = detail
-                if (!success) {
-                    sessionBlocked = true
-                    finish("Android gesture failed: $detail. STOP and inspect game.")
-                    return@post
-                }
-                // Wait for game animation and 2 stable captures after release.
-                val verificationStarted = SystemClock.elapsedRealtime()
-                fun verify() {
-                    if (stopped) return
-                    val actual = latest
-                    // An image captured *during* the drag is not proof of the
-                    // board after release. Require a settled post-release frame.
-                    val recent = latestAt >= verificationStarted + 350L &&
-                        SystemClock.elapsedRealtime() - latestAt < 2000L
-                    val pieceRemoved = actual?.pieces?.get(plan.move.pieceIndex) == null
-                    val lastPiece = plan.frame.recognized == 1
-                    val boardMatched = actual?.board == plan.expected
-                    if (recent && stableCount >= 2 && boardMatched && (pieceRemoved || lastPiece)) {
-                        moveCount++
-                        verifiedThisSession++
-                        finish("VERIFIED: Move $verifiedThisSession this session placed successfully. " +
-                            "Tap PREVIEW for the next piece (manual confirmation required).")
-                        return
-                    }
-                    if (SystemClock.elapsedRealtime() - verificationStarted > 6000L) {
-                        sessionBlocked = true
-                        val diagnosis = if (recent && actual != null)
-                            displacementReport(plan, actual.board)
-                            else "No settled post-release game frame was captured."
-                        finish("UNVERIFIED: $diagnosis STOP and inspect game. " +
-                            "No further moves this session.")
-                    } else handler.postDelayed({ verify() }, 400L)
-                }
-                handler.postDelayed({ verify() }, 900L)
+                if(tracking!==t || stopped)return@post
+                if(!ok)dragFailure(t,why)
+                else holdForVisualCheck(t)
+            }
+        }
+        if(!started) dragFailure(t,"Android rejected initial held gesture")
+    }
+
+    private fun holdForVisualCheck(t: TrackingMove) {
+        if(tracking!==t || stopped)return
+        pendingAbortReason?.let { abortTracking(it); return }
+        if(SystemClock.elapsedRealtime()-t.startAt>18000L) {
+            abortTracking("18-second shadow tracking timeout")
+            return
+        }
+        val holdStarted=SystemClock.elapsedRealtime()
+        val ok=TouchService.current?.continueHeldDrag(t.fingerX,t.fingerY,1050L){success,msg->
+            handler.post {
+                if(tracking!==t || stopped)return@post
+                if(!success)dragFailure(t,msg)
+                else evaluateShadow(t,holdStarted)
             }
         } ?: false
-        if (!accepted) {
-            lastGestureOutcome = "Android rejected gesture dispatch"
-            sessionBlocked = true
-            finish("Accessibility service rejected gesture. No move made.")
+        if(!ok)dragFailure(t,"Android refused held-pointer continuation")
+    }
+
+    private fun evaluateShadow(t: TrackingMove, holdStart: Long) {
+        if(tracking!==t || stopped)return
+        pendingAbortReason?.let { abortTracking(it); return }
+        val sample=shadowSample
+        val fresh=shadowSampleAt>=holdStart+250L &&
+            SystemClock.elapsedRealtime()-shadowSampleAt<1050L
+        if(!fresh || sample==null) {
+            t.blindReads++
+            lastShadowTracking="No unambiguous ${t.plan.observed.tileColor} game shadow " +
+                "on scan $shadowFrames: $shadowDiagnostic. Search attempt ${t.probes}; target " +
+                "row ${t.plan.move.row+1}, col ${t.plan.move.col+1}."
+            t.aligned=0
+            shapeLabel?.text="No reliable ${t.plan.observed.tileColor} game shadow. " +
+                "Seeking valid snap preview without releasing..."
+            // A finger just outside the board may produce NO game ghost at all.
+            // After an extra stationary check, probe one cell TOWARD the board
+            // centre. Never release because of a probe; still require 2 matches.
+            if(t.blindReads==1)holdForVisualCheck(t)
+            else if(t.probes<2 && t.corrections<5) {
+                t.probes++;t.blindReads=0
+                val screen=screenSize()
+                val cx=(ShadowTracker.boardX(3,screen.x)+ShadowTracker.boardX(4,screen.x))/2f
+                val cy=(454f+3.5f*55f)*screen.y/BoardRecognizer.REF_HEIGHT
+                val signX=if(t.fingerX>cx) -1 else 1
+                val signY=if(t.fingerY>cy) -1 else 1
+                val nextX=t.fingerX+signX*ShadowTracker.pitchX(screen.x)
+                val nextY=t.fingerY+signY*ShadowTracker.pitchY(screen.y)
+                if(nextX !in 15f..(screen.x-15f) || nextY !in 15f..(screen.y-15f)) {
+                    abortTracking("Cannot safely probe for a game shadow")
+                    return
+                }
+                t.corrections++
+                setStatus("Game ghost absent: probing one grid cell toward board center (${t.probes}/2).")
+                val ok=TouchService.current?.continueHeldDrag(nextX,nextY,750L){success,msg->
+                    handler.post {
+                        if(tracking!==t || stopped)return@post
+                        if(!success)dragFailure(t,msg)
+                        else { t.fingerX=nextX;t.fingerY=nextY;holdForVisualCheck(t) }
+                    }
+                } ?: false
+                if(!ok)dragFailure(t,"Cannot continue search gesture")
+            } else abortTracking("Game's placement shadow not reliably detected")
+            return
         }
+        t.blindReads=0
+        lastShadowTracking="Detected ${t.plan.observed.tileColor} translucent game ghost at " +
+            "row ${sample.row+1}, col ${sample.col+1}; " +
+            "target row ${t.plan.move.row+1}, col ${t.plan.move.col+1}; " +
+            "strength ${"%.2f".format(Locale.US,sample.strength)}, " +
+            "runner-up margin ${"%.2f".format(Locale.US,sample.confidence)}. " +
+            "Adjustments so far ${t.corrections}."
+        val dx=t.plan.move.col-sample.col
+        val dy=t.plan.move.row-sample.row
+        if(dx==0 && dy==0) {
+            t.aligned++
+            shapeLabel?.text="Game ghost aligned ${t.aligned}/2 frames " +
+                "(score ${"%.2f".format(Locale.US,sample.strength)}). Holding."
+            setStatus("Game shadow aligned with target (${t.aligned}/2 confirmations).")
+            if(t.aligned>=2) releaseAlignedPiece(t) else holdForVisualCheck(t)
+            return
+        }
+        t.aligned=0
+        if(t.corrections>=5) {
+            abortTracking("Five corrections exhausted; shadow still offset ($dx,$dy)")
+            return
+        }
+        val screen=screenSize()
+        val stepX=dx.coerceIn(-2,2)*ShadowTracker.pitchX(screen.x)
+        val stepY=dy.coerceIn(-2,2)*ShadowTracker.pitchY(screen.y)
+        val nextX=t.fingerX+stepX
+        val nextY=t.fingerY+stepY
+        if(nextX !in 15f..(screen.x-15f) || nextY !in 15f..(screen.y-15f)) {
+            abortTracking("Correction would move finger off screen")
+            return
+        }
+        t.corrections++
+        shapeLabel?.text="Game shadow ${-dx} cols, ${-dy} rows from target. " +
+            "Correction ${t.corrections}/5, then recheck."
+        setStatus("Correcting observed ghost offset: cols $dx, rows $dy, attempt ${t.corrections}.")
+        val ok=TouchService.current?.continueHeldDrag(nextX,nextY,750L){success,msg->
+            handler.post {
+                if(tracking!==t || stopped)return@post
+                if(!success)dragFailure(t,msg)
+                else {
+                    t.fingerX=nextX;t.fingerY=nextY
+                    holdForVisualCheck(t)
+                }
+            }
+        } ?: false
+        if(!ok)dragFailure(t,"Could not continue pointer toward target")
+    }
+
+    private fun releaseAlignedPiece(t: TrackingMove) {
+        if(tracking!==t || stopped)return
+        pendingAbortReason?.let { abortTracking(it); return }
+        shadowTarget=null
+        lastTouchPath += " -> visually aligned release (${t.fingerX.toInt()},${t.fingerY.toInt()}); " +
+            "${t.corrections} corrections; 2 ghost confirmations"
+        val ok=TouchService.current?.releaseHeldDrag{success,msg->
+            handler.post {
+                if(tracking!==t || stopped)return@post
+                tracking=null
+                lastGestureOutcome="${if(success)"Released" else "Release error"}: $msg"
+                if(success) verifyReleasedPiece(t.plan)
+                else { sessionBlocked=true;finish("UNVERIFIED: $msg; inspect game before continuing.") }
+            }
+        } ?: false
+        if(!ok) dragFailure(t,"Accessibility refused final release")
+    }
+
+    private fun abortTracking(reason: String) {
+        val t=tracking ?: return
+        val touch=TouchService.current
+        // A pending Android segment must finish before a return gesture can
+        // continue the same pointer. Defer STOP/abort to that callback.
+        if(touch?.isBusy == true) {
+            pendingAbortReason=reason
+            shapeLabel?.text="Waiting for active gesture segment, then returning to tray..."
+            setStatus("Safe abort requested: $reason")
+            return
+        }
+        pendingAbortReason=null
+        shadowTarget=null
+        lastPlacementCheck="UNVERIFIED: Visual alignment not confirmed: $reason. " +
+            "Attempting to return held piece to tray."
+        shapeLabel?.text="Returning piece to tray: $reason"
+        setStatus(lastPlacementCheck)
+        if(touch == null || !touch.isHolding) {
+            tracking=null;sessionBlocked=true
+            finish("UNVERIFIED: $reason. Finger may already have released; inspect board.")
+            return
+        }
+        val ok=touch.returnToTray { success,msg ->
+            handler.post {
+                if(tracking!==t || stopped)return@post
+                tracking=null;sessionBlocked=true
+                lastGestureOutcome=msg
+                finish("UNVERIFIED: $reason. Return-to-tray ${if(success)"attempt completed" else "FAILED"}; " +
+                    "inspect the board and tray. Do not assume the piece was recovered.")
+            }
+        }
+        if(!ok) {
+            tracking=null;sessionBlocked=true
+            finish("UNVERIFIED: $reason. Could not start tray return; inspect game.")
+        }
+    }
+
+    private fun dragFailure(t:TrackingMove, reason:String) {
+        if(tracking!==t)return
+        // Cancellation may have released the pointer already. Never claim the
+        // piece returned to the tray without visual confirmation.
+        abortTracking("Android held gesture error: $reason")
+    }
+
+    private fun requestStop() {
+        if(tracking != null) {
+            abortTracking("STOP pressed during drag")
+            return // The user can press STOP again after return concludes.
+        }
+        stopSelf()
+    }
+
+    private fun verifyReleasedPiece(plan: Prepared) {
+        // Only the game's ghost alignment authorizes release. Then verify the
+        // post-release board as before, including any row or column clears.
+        val verificationStarted=SystemClock.elapsedRealtime()
+        shapeLabel?.text="Released after shadow alignment. Verifying settled board..."
+        fun verify() {
+            if(stopped)return
+            val actual=latest
+            val recent=latestAt>=verificationStarted+350L &&
+                SystemClock.elapsedRealtime()-latestAt<2000L
+            val pieceRemoved=actual?.pieces?.get(plan.move.pieceIndex)==null
+            val lastPiece=plan.frame.recognized==1
+            if(recent && stableCount>=2 && actual?.board==plan.expected &&
+                (pieceRemoved || lastPiece)) {
+                moveCount++;verifiedThisSession++
+                finish("VERIFIED: Ghost-aligned move $verifiedThisSession placed successfully. " +
+                    "Tap PREVIEW for the next piece.")
+                return
+            }
+            if(SystemClock.elapsedRealtime()-verificationStarted>6500L) {
+                sessionBlocked=true
+                val diagnosis=if(recent && actual!=null) displacementReport(plan,actual.board)
+                    else "No settled post-release game frame captured."
+                finish("UNVERIFIED: $diagnosis STOP and inspect game.")
+            } else handler.postDelayed({verify()},400L)
+        }
+        handler.postDelayed({verify()},900L)
     }
 
     /** Diagnose placements by simulating legal final boards, including clears.
@@ -647,8 +843,13 @@ class CaptureService : Service() {
         // If the user stops before the 6-second verification period completes,
         // preserve that fact instead of saying no move was attempted.
         if (inProgress) lastPlacementCheck =
-            "INCOMPLETE: Capture stopped before placement verification finished. " +
+            "INCOMPLETE: Capture stopped before tracked placement verification finished. " +
             "Do not assume the drag succeeded."
+        if (tracking != null) TouchService.current?.let { touch ->
+            if (touch.isHolding) touch.returnToTray { _, _ -> }
+        }
+        shadowTarget=null
+        tracking=null
         stopped=true
         captureFrozen=false
         removeMarker()

@@ -1,11 +1,15 @@
-RockBlockBot v4.3 - Individual Tile Recognition
+RockBlockBot v4.4 - GAME SHADOW GUIDED PLACEMENT TRIAL
 
-1. Extract ZIP on PC.
-2. In GitHub Desktop use Repository > Show in Explorer.
-3. Copy the CONTENTS of RockBlockBot-v4.3 into the clone and overwrite matching project files.
-4. Do not delete .git or .github.
-5. Commit and Push origin.
-6. Wait for Build Debug APK in GitHub Actions, download artifact, install APK.
-7. Share a SINGLE APP (Rock Block Saga), PREVIEW, inspect cyan numbered tile rings and green board cells. Never NEXT MOVE on an incorrect shape.
+1. Extract the ZIP on your PC.
+2. GitHub Desktop > Repository > Show in Explorer.
+3. Copy CONTENTS of RockBlockBot-v4.4 into the existing clone; replace matching files.
+4. Preserve .git and .github folders (the existing Actions workflow builds your APK).
+5. Commit, Push origin, then wait for Build debug APK; install APK.
+6. Share SINGLE APP -> Rock Block Saga; PREVIEW, inspect all numbered tile markers.
+7. NEXT MOVE ONLY for correct shapes. The app will hold the piece, look for
+   the game's same-color translucent shadow, correct, and only release after
+   two shadow alignment checks. Otherwise it tries to return to tray.
+8. Wait up to 30 seconds; if no VERIFIED, STOP and send full report.
 
-Android build not run in this local environment.
+This is an experimental movement controller. The full Android Gradle build
+was NOT run locally; the game shadow detector is NOT yet live-verified.
