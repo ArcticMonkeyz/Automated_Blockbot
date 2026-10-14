@@ -1,34 +1,29 @@
-# Rock Block Bot v3.4 — four-block strip capture geometry fix
+# Rock Block Bot v3.5 - horizontal five-block placement correction
 
-This update is based on the three screenshots where the left purple tray piece was visibly **four** blocks (`####`) but the live preview read **three** (`###`), then dragged the real four-block piece farther right than the three-cell preview.
+This is a small, targeted hotfix based on the two screenshots of the purple five-block strip (`#####`). In the first screenshot, **PREVIEW** correctly indicated five cells in the second board row. In the second, the real purple strip landed **one column to the right**. Recognition was correct; the game's snap/release positioning was not.
 
-## Reproduced issue and fix
+## Changes from v3.4
 
-- The v3.3 detector inferred the horizontal strip count from its colored bounding width divided by its colored height. On a slightly vertically stretched capture, a 4×1 strip looked like 3 oversized cells.
-- We reproduced this with the provided screenshot `1000010910.png` after stretching only the purple tray area by +8%, +15% and +22%. **v3.3 read `###` (3); v3.4 reads `####` (4)** for each case, and also recognizes the correct 4-block strip at +30% stretch. Higher distortion can be rejected rather than guessed.
-- v3.4 counts dark vertical tile seams directly (alongside color coverage), with a bounded tile width. A fallback shape must fit the actual colored bounding box rather than ignore an extra tile-width segment.
-- A valid five-block purple strip on `1000010843.png` / `1000010845.png` is now recognized as `#####` instead of incorrectly `####`.
-- A false-positive detection from the non-game menu screenshot is now rejected.
-- Rechecked all 61 available historical screenshot PNGs: only the two legitimate 5-strip corrections and the menu false-positive changed; irregular pieces remain unchanged.
+- `PlacementGeometry.shapeCorrectionCells("#####")` now returns `(-1, 0)` (one board-cell left release correction). At a display width of 1080, that means approximately -84 physical screen pixels relative to the v3.4 release endpoint.
+- The global saved calibration **X=84, Y=484 is NOT changed or migrated**. In effect the `#####` footprint releases with X=0, Y=484; the green L `###/#..` keeps its earlier (-1,-1) shape-specific compensation; `####` stays (0,0).
+- Recognition, 41+ shape library, board solving, single-app capture, compact controls, gesture duration, and verification rules are unchanged.
+- Version incremented to `0.3.5` (versionCode 18) so the installed APK can be distinguished from v3.4.
 
-## What did NOT change
+## Known limitations
 
-- Global saved calibration X=84px, Y=484px (if that is your current setting); no automatic or cumulative offset migration in this version.
-- Green `###/#..` shape-specific (-1,-1) correction from v3.1; no new shape-specific correction is applied to the purple strip because the preview itself was already incorrect. Do not calibrate against a false preview.
-- Survival solver, drag timing, accessibility permissions, board-grid geometry, and compact floating controls remain unchanged.
-- PREVIEW / NEXT MOVE remain manual, with every real tray piece required to be recognized. RESUME may not skip a visible unknown piece.
-- Placement report now says PENDING during the gesture; if STOP is pressed before verification completes, it explicitly says INCOMPLETE instead of falsely suggesting no attempted placement.
+This is an **empirical shape-specific correction**, NOT proof that all pieces now land on the highlighted cells. Five-wide placement is inferred from screenshots; the post-release verification report should still be checked after an attempted move. The screenshots show a placement, but an exact completed-frame report was not supplied. The game may use shape-dependent pickup/snap behavior. Never alter the global X/Y based on a single shape, or press NEXT MOVE if the previewed count or footprint is wrong.
 
-## Test boundaries
+## Install and controlled test
 
-Host-JVM Kotlin/Java screenshot and calibration tests passed. The ZIP passes integrity checking; **the Android APK has NOT been compiled or tested locally**. Build with your existing GitHub Actions workflow, and verify the preview on your phone before any drag. The actual placement still needs on-device validation, especially for 2D shapes; do not assume recognition fixes calibrate all drag locations.
+1. Extract the ZIP, copy its project files over the corresponding files in your GitHub Desktop repository. Preserve the `.git` and `.github` folders.
+2. Commit and push; wait for GitHub Actions **Build Debug APK** to finish successfully, then install v3.5.
+3. Choose **Share a single app -> Rock Block Saga**. Begin with three visible pieces, and **do not press RESUME** if all three remain.
+4. Tap **PREVIEW**, verify every highlighted tile and pickup marker matches the real selected piece. Never place if a block is missing.
+5. On a correctly recognized horizontal `#####` only, test **NEXT MOVE once**, wait at least 7 seconds for verification, then STOP and send both the landed-board screenshot and the **Last placement check** report.
+6. If the new tray doesn't contain a five-wide piece, don't assume other pieces are recalibrated. Other shapes keep their v3.4 behavior.
 
-## Install/test
+## Local validation
 
-1. Extract this ZIP and copy the project files into your existing GitHub Desktop clone, replacing matching files. Leave `.git` and `.github` intact.
-2. Commit, push, and wait for GitHub Actions **Build Debug APK** to succeed. Install the new APK.
-3. Use **Share a single app → Rock Block Saga**. With three actual pieces, do NOT use RESUME.
-4. Tap PREVIEW. The displayed shape count and green highlighted cells must equal the physical blocks. For a four-block horizontal piece it MUST say `#### (4 blocks)` and show four green board cells. If it says `###`, STOP.
-5. Only then attempt ONE manual NEXT MOVE. Wait at least 7 seconds for post-release verification to finish, then STOP and send a screenshot of the game's final position and the **Last placement check** report.
-
-Do not press NEXT MOVE on a known wrong preview or try to compensate for a wrong piece count by changing X/Y.
+- `tests/CalibrationTest.kt` can be compiled with the pure `PlacementGeometry.kt` using the Kotlin CLI. It checks the existing red and green cases, vertical-five unchanged, and the new horizontal-five correction at a 1080x2400 display.
+- ZIP contents/integrity can be checked with `unzip -t`.
+- A full Android APK build is **not** performed locally; the GitHub Actions build is still required.

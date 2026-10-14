@@ -27,10 +27,18 @@ fun main() {
     // Its correction must NOT alter any other shape's effective offsets.
     require(PlacementGeometry.shapeCorrectionCells("###/#..") == (-1 to -1))
     require(PlacementGeometry.shapeCorrectionCells("####") == (0 to 0))
+    // v3.4: purple five-wide strip landed one column RIGHT of its correct
+    // preview. Compensate on this footprint only, preserving the good ####.
+    require(PlacementGeometry.shapeCorrectionCells("#####") == (-1 to 0))
+    require(PlacementGeometry.shapeCorrectionCells("#/#/#/#/#") == (0 to 0))
     require(PlacementGeometry.shapeCorrectionCells("#./##/.#") == (0 to 0))
     val (greenBiasX,greenBiasY)=PlacementGeometry.shapeCorrectionCells("###/#..")
     val effectiveGreenX=84+greenBiasX*dx
     val effectiveGreenY=484+greenBiasY*dy
     require(effectiveGreenX==0 && effectiveGreenY==398)
-    println("PASS: horizontal calibration X=$migratedX Y=$migratedY; green L effective X=$effectiveGreenX Y=$effectiveGreenY")
+    val (purpleBiasX,purpleBiasY)=PlacementGeometry.shapeCorrectionCells("#####")
+    val effectivePurpleX=84+purpleBiasX*dx
+    val effectivePurpleY=484+purpleBiasY*dy
+    require(effectivePurpleX==0 && effectivePurpleY==484)
+    println("PASS: #### global X=84 Y=484; ##### effective X=$effectivePurpleX Y=$effectivePurpleY; green L effective X=$effectiveGreenX Y=$effectiveGreenY")
 }
