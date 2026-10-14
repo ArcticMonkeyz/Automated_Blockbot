@@ -1,13 +1,18 @@
-RockBlockBot v4.4.3 - ONE STROKE SHADOW CALIBRATION (EXPERIMENTAL)
+RockBlockBot v4.4.4 - ONE STROKE SHADOW CALIBRATION (EXPERIMENTAL)
 
 1. Copy these files into your existing repo; keep .git and .github.
 2. GitHub Desktop: Commit and Push.
 3. GitHub Actions: build debug APK and install.
 4. Share a single app: Rock Block Saga. Tap PREVIEW and confirm the real shape.
-5. Tap CAL DRAG first. This goes TO the board and BACK in one Android gesture.
+5. Tap CAL DRAG first. This approaches the GREEN TARGET as an initial
+   estimate, then returns to the tray in one Android gesture. It does
+   not attempt to put the piece on the target during calibration.
    It is designed to return the piece, but could still accidentally place it.
 6. Wait for CALIBRATED and confirm board is unchanged and piece still in tray.
 7. Press PREVIEW again. NEXT MOVE uses the measured single-stroke release coordinate.
 8. Wait for VERIFIED or UNVERIFIED. Never continue after unexpected placement.
 
 This version avoids cancelled continuation segment 2. It is NOT true live closed-loop movement yet.
+
+New: shadow detector reads the exposed translucent edges under lifted pieces.
+This passed a real purple held-drag screenshot test, but still needs phone validation.

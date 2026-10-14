@@ -711,13 +711,15 @@ class CaptureService : Service() {
         shadowTarget=ShadowTracker.Target(plan.frame.board, plan.piece.normalized,
             plan.move.row, plan.move.col, plan.observed.tileColor)
         lastTouchPath="CAL DRAG for ${plan.observed.tileColor} ${plan.observed.signature}: " +
+            "planned preview top-left r${plan.move.row+1} c${plan.move.col+1}; " +
             "pickup (${coords[0].toInt()},${coords[1].toInt()}) -> " +
-            "board entry (${coords[2].toInt()},${coords[3].toInt()}) -> back to tray (ONE stroke)."
+            "preview-derived board approach (${coords[2].toInt()},${coords[3].toInt()}) " +
+            "-> back to tray (ONE stroke)."
         lastShadowTracking="Calibrating: sampling the game's colored shadow at " +
             "${probeSampleWindow.fromMs}-${probeSampleWindow.toMs} ms while " +
             "the piece dwells over the board (not during travel/return)."
         lastPlacementCheck="PENDING: Return-to-tray calibration probe; no placement requested."
-        shapeLabel?.text="CAL DRAG: measuring shadow, then returning toward tray. Do not touch."
+        shapeLabel?.text="CAL DRAG: checking preview-derived approach, then returning to tray. Do not touch."
         setStatus("Calibration trial: one uninterrupted drag out and back, then board check.")
         val accepted=touch.probeWithReturn(coords[0],coords[1],coords[2],coords[3]) {ok,msg ->
             handler.post { if(!stopped && probePlan===plan) finishProbe(plan,coords,ok,msg) }
@@ -740,7 +742,9 @@ class CaptureService : Service() {
         val sample=best?.second?.maxByOrNull {it.strength + it.confidence}
         val confident=gestureOk && observed >= 2 && observed > second && sample != null
         lastShadowTracking=if(sample!=null)
-            "Probe observed ${sample.colorlessPosition()} in $observed frames; " +
+            "Probe shadow ${sample.colorlessPosition()}, target row ${plan.move.row+1} " +
+            "col ${plan.move.col+1} (delta ${sample.col-plan.move.col} columns, " +
+            "${sample.row-plan.move.row} rows) in $observed frames; " +
             "other position samples=$second; strength ${"%.2f".format(Locale.US,sample.strength)}; " +
             "$probeObserved candidate and $probeRejected rejected frames during dwell. " +
             "Fingerprint ${plan.observed.tileColor} ${plan.observed.signature}."

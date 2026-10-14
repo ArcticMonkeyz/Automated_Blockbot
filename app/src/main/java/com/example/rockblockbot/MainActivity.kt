@@ -32,7 +32,7 @@ class MainActivity : Activity() {
         fun button(value: String, fn: () -> Unit) {
             layout.addView(Button(this).apply { text=value; setOnClickListener { fn() } })
         }
-        label("Rock Block Bot v4.4.3 — compact controls and timed shadow capture (TRIAL)",22f)
+        label("Rock Block Bot v4.4.4 — compact controls and timed shadow capture (TRIAL)",22f)
         label("1. Enable overlay/accessibility and SHARE A SINGLE APP: Rock Block Saga. " +
             "2. PREVIEW only when all real pieces are recognized. The numbered cyan " +
             "markers must match each visible tray tile and the green cells are the intended placement. " +
