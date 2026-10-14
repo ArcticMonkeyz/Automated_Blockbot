@@ -344,6 +344,49 @@ object BoardRecognizer {
             rows.first() in knownFootprints,count,1,color.name)
     }
 
+    /** Count actual tile boundaries in the colored strip, independent of a
+     * guessed tile pitch. Two internal seams mean three physical squares.
+     * Ambiguous seams are rejected rather than allowing a pixel-fit guess.
+     */
+    private fun verticalTileSeamCount(
+        image: Bitmap, zone: Zone, minX: Int, minY: Int,
+        boxW: Int, boxH: Int
+    ): Int? {
+        if (boxW !in 26..52 || boxH < boxW * 2.2) return null
+        val x0 = zone.left + minX + boxW / 4
+        val x1 = zone.left + minX + boxW * 3 / 4
+        fun brightness(y: Int): Double {
+            val yy = zone.top + minY + y
+            if (yy !in 0 until image.height) return 0.0
+            var sum = 0.0; var count = 0
+            for (x in x0..x1 step 3) {
+                val pixel = image.getPixel(x, yy)
+                sum += Color.red(pixel)*0.30 + Color.green(pixel)*0.59 + Color.blue(pixel)*0.11
+                count++
+            }
+            return sum / count.coerceAtLeast(1)
+        }
+        val values = DoubleArray(boxH) { brightness(it) }
+        val seams = mutableListOf<Int>()
+        for (y in 12 until boxH-12) {
+            val center = (values[y-1]+values[y]+values[y+1])/3.0
+            val sides = (values[y-8]+values[y+8])/2.0
+            if (sides-center < 18.0) continue
+            if (values[y] > values[y-1] || values[y] > values[y+1]) continue
+            if (seams.isNotEmpty() && y-seams.last() < 20) {
+                if (values[y] < values[seams.last()]) seams[seams.lastIndex] = y
+            } else seams.add(y)
+        }
+        val count = seams.size + 1
+        if (count !in 2..6) return null
+        val pitch = boxH.toDouble()/count
+        if (pitch !in 29.0..49.0) return null
+        if (seams.zipWithNext().any { (a,b) -> b-a !in 27..53 }) return null
+        if (seams.isNotEmpty() && (seams.first() - pitch !in -12.0..12.0 ||
+            boxH - seams.last() - pitch !in -12.0..12.0)) return null
+        return count
+    }
+
     /** A vertical strip must agree with its physical width. The fallback pixel-fit
      * previously split a five-tile green strip into six narrow phantom tiles.
      * Reject ambiguous dimensions rather than inventing an extra tile.
@@ -361,7 +404,10 @@ object BoardRecognizer {
         if (core.isEmpty()) return null
         val thickness = core.last() - core.first() + 1
         if (thickness !in 25..48) return null
-        val count = (boxH.toDouble() / thickness).roundToInt()
+        // The number of real tile seams, not bounding-box height / width,
+        // determines the vertical block count.
+        val count = verticalTileSeamCount(image, zone, minX, minY, boxW, boxH)
+            ?: return null
         if (count !in 3..6) return null
         val pitch = boxH.toDouble() / count
         if (pitch !in 29.0..49.0 || abs(pitch - thickness) > thickness * .16) return null
@@ -519,6 +565,9 @@ object BoardRecognizer {
             yProfile, pixelCount)?.let { return it }
         detectVerticalStrip(image, zone, color, minX, minY, boxW, boxH,
             xProfile, pixelCount)?.let { return it }
+        // If a narrow vertical object has no trustworthy seam count, do not
+        // allow the generic fitter to invent a different number of tiles.
+        if (boxW in 26..52 && boxH > boxW*2.4) return null
         // A six-high interpretation of a narrow strip without visible vertical
         // seams is unsafe. Do not let the fallback guess a sixth block.
         val uncertainVertical = boxH > boxW * 3 && !validY && yb.size < 3

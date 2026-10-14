@@ -1,0 +1,6 @@
+Offline saved screenshot regression (using JVM BufferedImage adapter):
+1000010969.png -> PURPLE #/#/#, BLUE ###/.#., RED ###/###/###
+1000010954.png -> GREEN #/#/#/#/#
+1000010944.png -> PURPLE #/#/#/#/#
+1000010958.png -> PURPLE #/#/#, BLUE ###/.#., RED ###/###/###
+Recognition smoke compilation and CalibrationTestKt / PerPieceCalibrationTestKt passed.

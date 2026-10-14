@@ -1,4 +1,12 @@
-# RockBlockBot v4.1 — guarded movement / recognition diagnostic build
+# v4.2 — Individual vertical tile seam recognition
+
+- Counts real dark boundaries between adjacent vertical tiles before assigning a vertical-strip block count.
+- Rejects ambiguous narrow vertical strips rather than guessing via bounding-box pitch.
+- Leaves board strategy, gesture offsets and per-piece calibrations unchanged.
+- Offline image regression: three-high purple `#/#/#` (previously four), five-high green `#/#/#/#/#`, five-high purple, blue T and red 3x3.
+- Kotlin recognition smoke test and existing calibration tests passed. Full Android APK build and on-device capture still require verification.
+
+# RockBlockBot v4.2 — guarded movement / recognition diagnostic build
 
 This is the **first safety stage** of a movement-system redesign, not a claim of fully corrected dragging. Do not use unattended play.
 
