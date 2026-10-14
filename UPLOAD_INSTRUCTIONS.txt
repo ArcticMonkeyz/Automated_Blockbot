@@ -1,7 +1,12 @@
-1. Extract this ZIP.
-2. In GitHub Desktop open Repository > Show in Explorer.
-3. Copy the contents of this folder into the repository root, preserving .git and .github.
-4. Replace existing files and commit: Fix piece recognition and touch anchor v2.6
-5. Push origin, then check Actions for the new debug APK.
-6. On phone: PREVIEW first. Confirm piece count and shape before NEXT MOVE.
-7. If UNVERIFIED, STOP. Share game and report screenshots.
+Rock Block Bot v2.7 - PC update
+
+1. Extract the ZIP.
+2. In GitHub Desktop: Repository > Show in Explorer.
+3. Copy all files and folders INSIDE this extracted folder to the cloned repository.
+4. Replace existing matching files. Keep .git and .github folders.
+5. Commit summary: Blockbot v2.7 shape detection fix
+6. Push origin, then wait for GitHub Actions to build.
+7. Download APK artifact, extract app-debug.apk, and install.
+
+On phone: Start capture; Share a single app > Rock Block Saga; PREVIEW.
+Check ALL green cells match the real piece. Do not press NEXT MOVE if not.

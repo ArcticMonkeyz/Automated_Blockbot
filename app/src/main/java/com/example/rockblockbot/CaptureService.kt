@@ -28,6 +28,8 @@ import kotlin.math.abs
 /** Guided multi-move placement: user must PREVIEW and confirm each move. */
 class CaptureService : Service() {
     private val handler = Handler(Looper.getMainLooper())
+    private var imageThread: HandlerThread? = null
+    @Volatile private var captureFrozen = false
     private val worker = Executors.newSingleThreadExecutor()
     private var projection: MediaProjection? = null
     private var display: VirtualDisplay? = null
@@ -100,11 +102,14 @@ class CaptureService : Service() {
             val metrics = resources.displayMetrics
             val w = metrics.widthPixels; val h = metrics.heightPixels
             reader = ImageReader.newInstance(w,h,PixelFormat.RGBA_8888,2)
+            // Image processing is too expensive for Android's main/UI thread.
+            // PREVIEW and STOP must remain responsive during recognition.
+            imageThread = HandlerThread("RockBlockImageAnalysis").apply { start() }
             reader?.setOnImageAvailableListener({ source ->
                 val image = source.acquireLatestImage() ?: return@setOnImageAvailableListener
                 try {
                     val now = SystemClock.elapsedRealtime()
-                    if (now-lastAnalyzed < 450L || (prepared != null && !inProgress)) return@setOnImageAvailableListener
+                    if (now-lastAnalyzed < 700L || captureFrozen) return@setOnImageAvailableListener
                     lastAnalyzed=now
                     val plane=image.planes[0]
                     val stride=plane.pixelStride
@@ -115,7 +120,8 @@ class CaptureService : Service() {
                         val cropped=Bitmap.createBitmap(bmp,0,0,w,h)
                         try {
                             val frame=BoardRecognizer.analyze(cropped)
-                            if (frame!=null) {
+                            if (frame!=null) handler.post {
+                                if (stopped || (prepared != null && !inProgress)) return@post
                                 latest=frame; latestAt=now
                                 if (frame.signature==stableSignature) stableCount++
                                 else { stableSignature=frame.signature; stableCount=1 }
@@ -123,9 +129,10 @@ class CaptureService : Service() {
                             }
                         } finally { cropped.recycle() }
                     } finally { bmp.recycle() }
-                } catch (e: Exception) { setStatus("Capture error: ${e.message}") }
-                finally { image.close() }
-            },handler)
+                } catch (e: Exception) {
+                    handler.post { if (!stopped) setStatus("Capture error: ${e.message}") }
+                } finally { image.close() }
+            },Handler(imageThread!!.looper))
             display=projection?.createVirtualDisplay("RockBlockRead",w,h,metrics.densityDpi,
                 DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,reader!!.surface,null,handler)
             createOverlay()
@@ -214,7 +221,8 @@ class CaptureService : Service() {
     private fun updateMarker() {
         val plan = prepared ?: return
         shapeLabel?.text = "Piece ${plan.move.pieceIndex+1}: ${plan.observed.signature} " +
-            "(${plan.observed.count} blocks); grip: bottom-left. Check shape!"
+            "(${plan.observed.count} blocks); pickup tile: " +
+            "row ${plan.observed.gripRow+1}, col ${plan.observed.gripCol+1}. Check shape!"
         val screen = screenSize()
         val coords = gestureCoords(plan)
         if (marker == null) {
@@ -242,10 +250,16 @@ class CaptureService : Service() {
 
     private fun prepareMove() {
         if (preparing || inProgress || sessionBlocked) return
+        prepared = null
+        captureFrozen = false
+        removeMarker()
+        moveButton?.isEnabled = false
         val frame = latest
-        if (frame == null || frame.recognized !in 1..3 || stableCount < 2 ||
+        val expectedPieces = 3 - (moveCount % 3)
+        if (frame == null || frame.recognized != expectedPieces || stableCount < 2 ||
             SystemClock.elapsedRealtime() - latestAt > 4000L || frame.width >= frame.height) {
-            setStatus("Need a recent stable portrait board and at least one recognized piece.")
+            setStatus("Need a stable portrait game board with $expectedPieces/$expectedPieces " +
+                "remaining pieces recognized. If a tile is missing, STOP and send the report.")
             return
         }
         preparing = true
@@ -273,10 +287,11 @@ class CaptureService : Service() {
                     prepared = Prepared(frame,move,piece,frame.pieces[move.pieceIndex]!!,
                         Solver.placeAndClear(frame.board,piece,move.row,move.col),
                         SystemClock.elapsedRealtime())
+                    captureFrozen = true
                     updateMarker()
                     moveButton?.isEnabled = true
                     setStatus("PREVIEW only: piece ${move.pieceIndex+1}, row ${move.row+1}, col ${move.col+1}. " +
-                        "${piece.normalized.size} green cells = full detected shape; blue = bottom-left occupied pickup tile; red = release. " +
+                        "${piece.normalized.size} green cells = full detected shape; blue = pickup tile; red = release. " +
                         "If count/shape differs from the real piece, STOP. Calibration X=$xOffset Y=$yOffset.")
                 }
             } catch (e: Exception) {
@@ -302,8 +317,9 @@ class CaptureService : Service() {
             return
         }
         if (SystemClock.elapsedRealtime()-plan.time > 30000L) {
-            prepared = null; moveButton?.isEnabled = false; removeMarker()
-            setStatus("Preview expired after 30 seconds. Tap PREVIEW again.")
+            prepared = null; captureFrozen = false
+            moveButton?.isEnabled = false; removeMarker()
+            setStatus("Preview expired after 30 seconds. Wait for a new frame, then PREVIEW again.")
             return
         }
         val coords = gestureCoords(plan)
@@ -313,6 +329,7 @@ class CaptureService : Service() {
             setStatus("Drag would leave the screen. Adjust X/Y first."); return
         }
         inProgress = true
+        captureFrozen = false
         moveButton?.isEnabled = false
         previewButton?.isEnabled = false
         removeMarker()
@@ -409,10 +426,12 @@ class CaptureService : Service() {
     }
     override fun onDestroy() {
         stopped=true
+        captureFrozen=false
         removeMarker()
         try { overlay?.let { wm?.removeView(it) } } catch (_: Exception) {}
         overlay=null; moveButton=null; previewButton=null; offsetLabel=null; shapeLabel=null; prepared=null
         reader?.setOnImageAvailableListener(null,null)
+        imageThread?.quitSafely(); imageThread=null
         display?.release(); display=null
         reader?.close(); reader=null
         projection?.unregisterCallback(callback)
