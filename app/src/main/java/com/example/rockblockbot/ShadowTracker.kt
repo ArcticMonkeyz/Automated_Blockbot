@@ -10,7 +10,7 @@ import kotlin.math.abs
  */
 object ShadowTracker {
     data class Target(val occupied: Long, val cells: List<Cell>, val row: Int, val col: Int,
-                      val color: String)
+                      val color: String, val probeRow: Int? = null, val probeCol: Int? = null)
     data class Match(val row: Int, val col: Int, val strength: Double,
                      val confidence: Double, val litCells: Int, val alternatives: Int)
     data class Scan(val match: Match?, val diagnostic: String)
@@ -93,6 +93,10 @@ object ShadowTracker {
                 target: Target): Scan {
         if (target.cells.isEmpty() || target.cells.size>9)
             return Scan(null,"Invalid target footprint")
+        // During CAL DRAG, candidates far from the actual probe are diagnostic only.
+        // A large unexplained displacement must never authorize a placement.
+        fun nearProbe(r:Int,c:Int):Boolean = target.probeRow == null || target.probeCol == null ||
+            (abs(r-target.probeRow)<=2 && abs(c-target.probeCol)<=2)
         val heat=DoubleArray(64)
         for (row in 0..7) for (col in 0..7) {
             val index=row*8+col
@@ -113,9 +117,9 @@ object ShadowTracker {
                 if(s>=.55) lit++
                 if(s<minimum)minimum=s
             }
-            if (legal) candidates.add(Candidate(r,c,sum/target.cells.size,lit,minimum))
+            if (legal && nearProbe(r,c)) candidates.add(Candidate(r,c,sum/target.cells.size,lit,minimum))
         }
-        if (candidates.isEmpty())return Scan(null,"No legal empty board placement")
+        if (candidates.isEmpty())return Scan(null,"No legal empty board placement near calibration probe")
         val ranked=candidates.sortedWith(compareByDescending<Candidate>{it.mean}.thenByDescending{it.lit})
         val best=ranked.first()
         val required=if (target.cells.size<=3) target.cells.size else (target.cells.size*.75).toInt().coerceAtLeast(3)
@@ -124,7 +128,9 @@ object ShadowTracker {
         val stats="best r${best.r+1} c${best.c+1}, " +
             "colored cells ${best.lit}/${target.cells.size}, " +
             "strength ${"%.2f".format(java.util.Locale.US,best.mean)}, " +
-            "margin ${"%.2f".format(java.util.Locale.US,margin)}"
+            "margin ${"%.2f".format(java.util.Locale.US,margin)}; " +
+            "probe ${target.probeRow?.plus(1) ?: "off"},${target.probeCol?.plus(1) ?: "off"}; " +
+            "runner-up ${second?.let { "r${it.r+1} c${it.c+1}" } ?: "none"}"
         if (best.mean >= .69 && best.lit >= required && best.minimum >= .23 && margin >= .095)
             return Scan(Match(best.r,best.c,best.mean,margin,best.lit,ranked.size),
                         "Tracked (clear centers): $stats")
@@ -150,7 +156,7 @@ object ShadowTracker {
                 if(value>=.32)lit++
                 minimum=minOf(minimum,value)
             }
-            if(legal) fringes.add(Candidate(r,c,total/target.cells.size,lit,minimum))
+            if(legal && nearProbe(r,c)) fringes.add(Candidate(r,c,total/target.cells.size,lit,minimum))
         }
         val ordered=fringes.sortedWith(compareByDescending<Candidate>{it.mean}.thenByDescending{it.lit})
         val peak=ordered.firstOrNull() ?: return Scan(null,"No legal shadow footprint")

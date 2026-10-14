@@ -749,7 +749,8 @@ class CaptureService : Service() {
         previewButton?.isEnabled=false
         shadowSample=null;shadowFrames=0;shadowSampleAt=0L
         shadowTarget=ShadowTracker.Target(plan.frame.board, plan.piece.normalized,
-            plan.move.row, plan.move.col, plan.observed.tileColor)
+            plan.move.row, plan.move.col, plan.observed.tileColor,
+            probeAnchor.first, probeAnchor.second)
         lastTouchPath="CAL DRAG for ${plan.observed.tileColor} ${plan.observed.signature}: " +
             "planned preview top-left r${plan.move.row+1} c${plan.move.col+1}; " +
             "safe probe r${probeAnchor.first+1} c${probeAnchor.second+1}; " +
@@ -792,7 +793,8 @@ class CaptureService : Service() {
         else "No agreeing shadow during the board-entry dwell: " +
             "$probeObserved candidate frame(s), $probeRejected rejected; " +
             "sampling ${probeSampleWindow.fromMs}-${probeSampleWindow.toMs} ms. " +
-            "$shadowDiagnostic"
+            "$shadowDiagnostic; probe expected r${plan.move.row+1} c${plan.move.col+1} " +
+            "(safe-probe position recorded in Last touch path)."
         probeSamples.clear()
         // Resume ordinary recognition after the finger has returned toward tray.
         val waitingSince=SystemClock.elapsedRealtime()

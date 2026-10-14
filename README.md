@@ -55,3 +55,9 @@ java -jar /tmp/realghost.jar path/to/during-cal-drag.png path/to/before.png path
 kotlinc app/src/main/java/com/example/rockblockbot/ProbeTiming.kt tests/ProbeTimingTest.kt -include-runtime -d /tmp/probe-timing.jar
 java -jar /tmp/probe-timing.jar
 ```
+
+## v4.4.6 probe-aware shadow detection (experimental)
+- CAL DRAG shadow candidates are constrained to within two board cells of the selected safe probe anchor. This prevents unrelated distant colored matches from being accepted as calibration evidence.
+- Rejection diagnostics include expected probe and runner-up candidate information.
+- Existing single-stroke final placement, solver, and piece recognition are unchanged.
+- Do not press NEXT MOVE if CAL DRAG reports NO CALIBRATION. An actual Android build and device validation are still required.
