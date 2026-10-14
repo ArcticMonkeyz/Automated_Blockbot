@@ -1,26 +1,26 @@
-Offline JVM recognition/solver regression results (not an Android APK test):
+Rock Block Bot v2.9 — JVM Kotlin screenshot tests
 
-User screenshot 1000010849.png (with floating panel covering old game-color sample):
-  board: 6 occupied cells
-  piece 1: ###/#.. (4 cells)
-  piece 2: #./##/.# (4 cells)
-  piece 3: #### (4 cells) [v2.6 misread as ### on device]
+1000010861.png:
+  board 6 occupied (top row empty; row2 cols1,8; row6 cols3,6; row8 cols1,8)
+  yellow ###/#.. (4)
+  purple #./##/.# (4)
+  green #### (4), detected via color-core strip (160px wide; 40px pitch)
+1000010849.png:
+  yellow ###/#.. (4)
+  purple #./##/.# (4)
+  green #### (4)
+1000010843.png:
+  horizontal green #### (4)
+  vertical purple #/#/#/#/# (5)
+  green ###/#.. (4)
+1000010813.png:
+  vertical red #/#/#/#/# (5)
+  vertical blue #/#/#/# (4)
+  purple ##/## (4)
+1000010844.png:
+  horizontal purple ##### (5)
+  vertical yellow #/#/#/#/# (5)
 
-User screenshot 1000010843.png:
-  board: 6 occupied cells
-  piece 1: ##### (5 cells) [v2.6 detected ####]
-  piece 2: #/#/#/#/# (5 cells)
-  piece 3: ###/#.. (4 cells)
-
-User screenshot 1000010813.png:
-  board: 6 occupied cells
-  piece 1: #/#/#/#/# (5 cells)
-  piece 2: #/#/#/# (4 cells)
-  piece 3: ##/## (4 cells)
-
-User screenshot 1000010829.png (during drag / partially occluded):
-  piece 3: NOT RECOGNIZED (correctly refuses uncertain detection)
-
-The Kotlin solver produced complete, non-overlapping three-piece plans
-for all three stable screenshots above. The Android UI and gestures were
-not compiled or executed in this environment.
+Regression batch: 49 historical screenshots compared before/after;
+4 changes: 0769, 0825, 0844, 0861.
+No physical-device placement test or Android APK compilation performed.

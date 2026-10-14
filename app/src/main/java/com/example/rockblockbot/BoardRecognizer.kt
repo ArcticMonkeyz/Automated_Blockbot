@@ -47,8 +47,7 @@ object BoardRecognizer {
                 "Piece ${i+1}: " + (p?.let {
                     "${it.signature} (${it.count} blocks, pitch ${it.pitch}, " +
                     "fit ${"%.2f".format(java.util.Locale.US, it.fit)}, " +
-                    "stripes ${it.stripesX}x${it.stripesY}, " +
-                    (if (it.knownShape) "library match" else "unlisted shape") + ")"
+                    "stripes ${it.stripesX}x${it.stripesY}, direct geometry)"
                 } ?: "NOT RECOGNIZED")
             }.joinToString("\n")
     }
@@ -153,6 +152,70 @@ object BoardRecognizer {
         return bonus.coerceAtMost(0.24)
     }
 
+    /**
+     * Read one-row/one-column strips from their high-confidence colored core.
+     * The bounding mask can be 10-15px taller than a tile due to highlights,
+     * shadows and antialiasing; measuring the full bounding height incorrectly
+     * turns a 4x1 strip (160x51px) into 3 oversized tiles.
+     * This path is independent of the footprint library.
+     */
+    private fun detectStraightStrip(
+        image: Bitmap, zone: Zone, color: TileColor,
+        minX: Int, minY: Int, boxW: Int,
+        yProfile: IntArray, pixelCount: Int
+    ): ObservedPiece? {
+        fun coreBand(profile: IntArray): IntRange? {
+            val peak = profile.maxOrNull() ?: return null
+            if (peak < 14) return null
+            val threshold = peak * 0.63
+            var bestStart = -1
+            var bestEnd = -1
+            var start = -1
+            for (i in 0..profile.size) {
+                val strong = i < profile.size && profile[i] >= threshold
+                if (strong && start < 0) start = i
+                if (!strong && start >= 0) {
+                    if (i - start > bestEnd - bestStart) {
+                        bestStart = start
+                        bestEnd = i
+                    }
+                    start = -1
+                }
+            }
+            if (bestStart < 0 || bestEnd - bestStart !in 24..56) return null
+            val explained = (bestStart until bestEnd).sumOf { profile[it] }
+            // Irregular shapes have colored pixels outside the main stripe.
+            if (explained.toDouble() / pixelCount < 0.86) return null
+            return bestStart until bestEnd
+        }
+        // Only horizontal strips use this specialized detector. Our screenshot
+        // tests showed that vertical projections can underestimate tile width.
+        val core = coreBand(yProfile) ?: return null
+        val thickness = core.count()
+        if (boxW < thickness * 1.75) return null
+        val count = (boxW.toDouble() / thickness).roundToInt()
+        if (count !in 2..6 || abs(boxW.toDouble() / count - thickness) > thickness * 0.17)
+            return null
+        val pitch = boxW.toDouble() / count
+        val lanePixels = IntArray(count)
+        for (v in core) for (u in 0 until boxW) {
+            val pixel = image.getPixel(zone.left + minX + u, zone.top + minY + v)
+            if (matches(pixel, color)) {
+                val lane = (u / pitch).toInt().coerceIn(0, count - 1)
+                lanePixels[lane]++
+            }
+        }
+        val minLane = thickness * pitch * 0.48
+        if (lanePixels.any { it < minLane }) return null
+        val rows = listOf("#".repeat(count))
+        return ObservedPiece(rows,
+            (zone.left + minX + pitch / 2).toFloat(),
+            (zone.top + minY + (core.first + core.last) / 2.0).toFloat(),
+            0, 0, pitch.roundToInt(),
+            (lanePixels.sum().toDouble() / pixelCount).coerceIn(0.0, 1.0),
+            rows.first() in knownFootprints, count, 1)
+    }
+
     private fun detectPiece(image:Bitmap,zone:Zone):ObservedPiece? {
         val colors=TileColor.entries
         val counts=IntArray(colors.size)
@@ -180,6 +243,10 @@ object BoardRecognizer {
         }
         val xb=bands(xProfile);val yb=bands(yProfile)
         val validX=reliable(xb,boxW);val validY=reliable(yb,boxH)
+        // Detect straight pieces before the fallback pixel-fit. This must run
+        // even when visual seams merge and bands() sees only one wide stripe.
+        detectStraightStrip(image, zone, color, minX, minY, boxW,
+            yProfile, pixelCount)?.let { return it }
 
         // Fast, shape-preserving route: when both axes have clear tile seams,
         // their stripe centers are more reliable than a guessed tile pitch.
@@ -235,7 +302,7 @@ object BoardRecognizer {
         }
         var best:Candidate?=null
         for(pitch in 30..46) {
-            val cols=((boxW.toDouble()/pitch).roundToInt()).coerceIn(1,5)
+            val cols=((boxW.toDouble()/pitch).roundToInt()).coerceIn(1,6)
             val rows=((boxH.toDouble()/pitch).roundToInt()).coerceIn(1,6)
             if(validX && xb.size>1 && cols!=xb.size) continue
             if(validY && yb.size>1 && rows!=yb.size) continue
@@ -267,7 +334,7 @@ object BoardRecognizer {
             val known=pattern in knownFootprints
             // The piece library is a weak tie-breaker, not a whitelist: some
             // observed shapes are missing from the extracted 41 footprints.
-            val score=f1+(if(known) .012 else 0.0)+
+            val score=f1+
                 (if(rows==1) seamBonus(image,zone,minX,minY,boxW,boxH,pitch,cols) else 0.0)
             val firstRow=detected.indexOfFirst { '#' in it }
             val gripRow=trimmed.indexOfLast { '#' in it }
@@ -280,13 +347,9 @@ object BoardRecognizer {
         val chosen=best ?: return null
         // Reject explanations that omit a substantial part of the colored
         // mask. Three detected blocks cannot explain four real blocks.
-        if (chosen.known) {
-            if(chosen.recall<0.82 || chosen.score<0.70) return null
-        } else {
-            // The extracted shape list is incomplete, but low-fit unknown
-            // shapes are more likely to be a bad crop or an animation frame.
-            if(chosen.recall<0.86 || chosen.score<0.80) return null
-        }
+        if(chosen.recall<0.86 || chosen.score<0.80) return null
+        // Any confident straight strip was already handled by the independent
+        // color-core detector above; the fallback handles irregular pieces.
         return ObservedPiece(chosen.rows,chosen.gripX,chosen.gripY,
             chosen.gripRow,chosen.gripCol,chosen.pitch,chosen.score.coerceAtMost(1.0),
             chosen.known,if(validX)xb.size else 0,if(validY)yb.size else 0)

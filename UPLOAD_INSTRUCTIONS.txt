@@ -1,12 +1,13 @@
-Rock Block Bot v2.7 - PC update
+Rock Block Bot v2.9 - PC update
 
 1. Extract the ZIP.
 2. In GitHub Desktop: Repository > Show in Explorer.
 3. Copy all files and folders INSIDE this extracted folder to the cloned repository.
 4. Replace existing matching files. Keep .git and .github folders.
-5. Commit summary: Blockbot v2.7 shape detection fix
-6. Push origin, then wait for GitHub Actions to build.
-7. Download APK artifact, extract app-debug.apk, and install.
+5. Commit summary: Blockbot v2.9 independent tile recognition
+6. Push origin, then wait for GitHub Actions to build the debug APK.
+7. Download APK artifact, extract app-debug.apk, and install it.
 
 On phone: Start capture; Share a single app > Rock Block Saga; PREVIEW.
-Check ALL green cells match the real piece. Do not press NEXT MOVE if not.
+Check ALL preview cells match the real piece. Do not press NEXT MOVE if not.
+This source ZIP is NOT an APK, and it has not been tested on an Android phone.

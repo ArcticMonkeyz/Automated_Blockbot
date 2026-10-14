@@ -2,7 +2,7 @@ package com.example.rockblockbot
 
 /**
  * Shape footprints recovered from Rock Block Saga v1.1.45 asset data.
- * 41 distinct fixed-orientation footprints. No reliable appearance probabilities
+ * 41 asset-derived fixed-orientation footprints, plus directly observed additions. No reliable appearance probabilities
  * were recovered; these are used for board-flexibility heuristics, not a claim
  * about the game's random-number generator.
  */
@@ -48,7 +48,10 @@ object ShapeLibrary {
         "#####",
         "##/##/##",
         "###/###",
-        "###/###/###"
+        "###/###/###",
+        // Confirmed on-screen but absent from the extracted 41-pattern set:
+        "###/#..",
+        "#./##/.#"
     )
     val pieces: List<Piece> = patterns.map { pattern ->
         Piece(pattern.split("/").flatMapIndexed { r, line ->

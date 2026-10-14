@@ -1,37 +1,41 @@
-# Rock Block Bot v2.7 — Shape Identification and Preview Fix
+# Rock Block Bot v2.9 — Independent Tile-Geometry Recognition
 
-This is an **experimental guided-move Android app**, not unattended gameplay. It is designed for the Pixel 7 Pro layout tested in this project. It requires the user's screen-capture, overlay, and accessibility permissions to perform a confirmed move.
+Experimental Android game assistant for Rock Block Saga. **Manual PREVIEW and NEXT MOVE confirmation required for every placement.** No unattended gameplay. Designed around the tested Pixel 7 Pro screen geometry; other phones may require recalibration.
 
-## Fixes since v2.6
+## What's new in v2.9
 
-- **Four-block horizontal green piece:** Counts all four tiles, rather than reading `###`. Uses distinct vertical color bands when visible and checks that detected cells account for the full colored mask.
-- **Five-block horizontal purple piece:** Fixes a separate regression in which the recognizer read `####` instead of `#####`. The left tray's crop now includes the entire piece; a seam-contrast check distinguishes small tiles that have little visible color separation.
-- **Irregular pieces:** Preserves holes and orientation, e.g. `###/#..` and `#./##/.#`. The 41-shape library is used as a *tie-breaker*, not a strict whitelist, because some observed shapes are absent from the extracted list.
-- **Entire-screen capture with overlay:** The game-presence check now samples an uncovered part of the blue background rather than the floating controls. Single-app sharing remains recommended and was the user's most reliable mode.
-- **Responsive controls:** Moves image analysis off the Android UI thread, throttles frames, and freezes the recognized frame while PREVIEW is visible. PREVIEW, NEXT MOVE, and STOP should remain responsive during analysis.
-- **Safety:** Requires all three pieces to be recognized at the start of a round (and the correct number after each verified placement). Rejects low-coverage or implausible shapes. Every move still needs PREVIEW then NEXT MOVE. If verification fails, further moves are blocked.
-- **Calibration:** Keeps X=0 and Y=+400 as the default for a new installation; saved calibration takes precedence. Touch pickup remains anchored to an occupied tile in the lowest row, choosing the leftmost tile in that row. The overlay now identifies its row/column rather than ambiguously calling it the bottom-left of every shape.
-- **Solver:** Keeps the survival-first, line-clearing and future-shape-mobility heuristics from v2.5. No continuous gameplay was added.
+- **Fixes horizontal-strip over/undercounting using colored tile cores:** the four-wide green strip on the latest user screenshot has a full colored bounding mask of about 160 × 51 reference pixels. The extra pixels at its top/bottom made the previous box-width/box-height estimator round 4 tiles down to 3. v2.9 measures the solid horizontal stripe (~40px thick), counts 4 segments using independently observed color, and rejects missing/weak segments. This works without requiring a matching pre-listed piece.
+- **Avoids vertical-strip regressions:** preserved the existing vetted vertical detector after a test showed the new core thickness method could overcount a 5-block vertical line as 6.
+- **Known shapes and unknown shapes:** screen recognition is independent of the 41-pattern XAPK library. The two confirmed on-screen irregular shapes `###/#..` and `#./##/.#` are included as *additional* potential shapes for the survival solver; a shape does not need to occur in this list to be visually detected.
+- **Keeps strict recognition:** on a full initial tray all three pieces must be recognized before PREVIEW can issue a recommendation. Moves still require explicit user confirmation and board-verification. Ambiguous frames are rejected rather than silently moved.
+- **No drag coordinate changes:** saved/default X=0px and Y=+400px endpoint calibration, bottom-row-leftmost occupied pickup anchor, the hold/drag timing, and the survival-focused solver are unchanged.
+- **Screen-sharing:** Share a single app → Rock Block Saga is still recommended, because this was the most reliable selection on the user's phone.
 
-## Upload and build (GitHub Desktop)
+## Build via GitHub Desktop
 
-1. Download and extract this ZIP on your PC.
-2. In GitHub Desktop, open **Repository > Show in Explorer** for `ArcticMonkeyz/Automated_Blockbot`.
-3. Copy **everything inside** this extracted project folder into the cloned repository, replacing matching files. Do not delete `.git` or `.github`.
-4. Commit with summary `Blockbot v2.7 shape detection fix`, then **Push origin**.
-5. Open the repository's GitHub Actions tab. When the workflow finishes successfully, download its APK artifact ZIP, extract `app-debug.apk`, and install it over the existing app.
+1. Extract this ZIP on the PC.
+2. In GitHub Desktop use **Repository → Show in Explorer** for `ArcticMonkeyz/Automated_Blockbot`.
+3. Copy the extracted project files into the repository, replacing matching files. **Keep the original `.git` and `.github` folders.**
+4. Commit `Blockbot v2.9 independent tile geometry` and **Push origin**.
+5. Wait for the repository's GitHub Actions Android APK build to succeed. Download its artifact, extract the APK and install.
 
-## First test
+## First phone test — please do NOT rush NEXT MOVE
 
-1. Start capture. Prefer **Share a single app > Rock Block Saga**. If needed, try Entire screen as a separate test.
-2. On a board with three available pieces, wait a few seconds, then tap **PREVIEW**.
-3. Verify the displayed piece number, count, and orientation against the real piece. Green squares should show **every** occupied cell. A four-block horizontal piece must show `####`, not `###`.
-4. **Do not press NEXT MOVE** if the preview differs from the actual piece. Press STOP and send the recognition report instead.
-5. Only after the preview matches, confirm one NEXT MOVE, wait for VERIFIED, and inspect the board. Stop if UNVERIFIED.
+1. Start screen recognition and share **the Rock Block Saga app**.
+2. Wait 3–5 seconds, press PREVIEW.
+3. Confirm green four-wide piece displays `####` with **four** preview squares, not `###` with three. Inspect the actual board occupancy and the selected piece.
+4. If any preview shape is wrong, **do not press NEXT MOVE**; tap STOP and share the screenshot + Latest game report.
+5. If correct, one confirmed NEXT MOVE is a separate placement test. Verify it landed exactly as previewed; stop if the app reports UNVERIFIED.
 
-## Validation and limits
+## Offline verification performed
 
-- The recognizer and solver were compiled with a JVM Kotlin test harness (minimal Android graphics stubs) and tested on three prior user screenshots. The problematic four-block green piece was recognized as `####`; a previously misread five-block purple piece was recognized as `#####`; irregular four-cell shapes were also recognized. A mid-drag screenshot containing an ambiguous piece was deliberately rejected.
-- The **Android APK was not compiled or run here**; GitHub Actions is the first Android build test. Screen-capture permissions, real-device gestures, and all possible game states remain unverified.
-- The XAPK-derived 41-piece list is not guaranteed to contain every possible shape. Exact shape probabilities, scoring, and reward-program rules remain unknown.
-- The app does not use privileged APIs or bypass Android permission prompts. Accessibility gestures are powerful; disable the accessibility service when not testing.
+- Kotlin compiler + minimal Android `Bitmap`/`Color` stubs; tested game image recognizer against 49 prior game screenshots and compared to v2.8.
+- Specific screenshot assertions:
+  - `1000010861.png`: Piece 1 `###/#..`, Piece 2 `#./##/.#`, Piece 3 `####` (all four green blocks).
+  - `1000010849.png`: Same three pieces correctly detected.
+  - `1000010843.png`: 4-horizontal, 5-vertical, irregular four-tile.
+  - `1000010813.png`: 5-vertical, 4-vertical, 2x2.
+  - `1000010844.png`: 5-horizontal purple and 5-vertical yellow.
+- Only four of 49 historical screenshots changed identification relative to v2.8; all four changes were consistent with the visible tile counts. Some historical screenshots depict dragging/overlays and appropriately may fail full-tray detection.
+
+**Limitations:** The Android APK has not been built or tested on a physical phone in this environment; GitHub Actions is still needed. Automated gestures and calibration remain unverified for v2.9. Shape detection remains game-layout-specific, and the XAPK library isn't claimed to include every shape or true generation probabilities. No auto-play was added.
