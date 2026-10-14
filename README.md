@@ -1,6 +1,14 @@
-# RockBlockBot v4.4.10 — occluded-purple calibration
+# RockBlockBot v4.4.11 — purple fringe + leftward dual-probe regression fix
 
 **Experimental Android source project. This is NOT a prebuilt APK and is NOT proven on the phone yet.** Build with your existing Android/GitHub Actions workflow, install the resulting APK as an update without clearing app data, then run a supervised CAL DRAG. Do not run unattended.
+
+## Oct 14 second-capture follow-up (v4.4.11)
+
+The v4.4.10 dual-probe diagnostic shows the raised purple four-strip **shifted one column** between the two screen captures. Yet the second endpoint pushed the piece onto the right edge, obscuring the translucent placement preview completely. The first endpoint had a narrow purple preview fringe measuring about 0.22 of the sample area, below the previous 0.28 cutoff. These are **visibility problems**, not proof that release calibration is correct.
+
+For purple horizontal four-strips only, v4.4.11 starts the two-stop probe one *legal* cell to the left of the older preferred anchor and then returns to that anchor for the second dwell (when both are legal). If the left cell is blocked, it prefers a leftward second endpoint. The composite detector now recognizes the narrow fringe above 0.19, but still requires 3 opaque cells and the distinct end preview, board-occupancy exclusion, two separately captured probe locations that follow the exact cell shift, and successful return to tray. The solid lifted piece alone **never** authorizes calibration.
+
+**Not yet validated on a phone.** On a different board the safer leftward probe might be unavailable. If two real preview fringes are not visible, calibration will still refuse to save; export both diagnostics instead. Do not use NEXT MOVE following NO CALIBRATION.
 
 ## What changed
 

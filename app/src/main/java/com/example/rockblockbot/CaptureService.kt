@@ -800,10 +800,18 @@ class CaptureService : Service() {
         return options.maxByOrNull { it.third }?.let { it.first to it.second }
     }
 
+    /** Baseline board occupancy guard for purple-probe reselection. */
+    private fun isSafeAnchor(plan: Prepared, row: Int, col: Int): Boolean =
+        plan.piece.normalized.all { cell ->
+            val r=row+cell.r;val c=col+cell.c
+            r in 0..7 && c in 0..7 &&
+                (plan.frame.board and (1L shl (r*8+c)))==0L
+        }
+
     /** Second safe anchor, a single cell from the first. Prefer horizontal
      * movement for the four-wide strip; avoid occupied or clipped destinations. */
     private fun alternateProbeAnchor(plan:Prepared, first:Pair<Int,Int>):Pair<Int,Int>? {
-        val options=listOf(0 to 1,0 to -1,1 to 0,-1 to 0)
+        val options=listOf(0 to -1,0 to 1,1 to 0,-1 to 0)
         val occupied=plan.frame.board
         for ((dr,dc) in options) {
             val nr=first.first+dr;val nc=first.second+dc
@@ -828,9 +836,23 @@ class CaptureService : Service() {
         }
         val coords=gestureCoords(plan)
         val screen=screenSize()
-        val probeAnchor = safeProbeAnchor(plan) ?: run {
+        val preferredAnchor = safeProbeAnchor(plan) ?: run {
             setStatus("CAL DRAG blocked: no legal probe footprint."); return
         }
+        // The Oct 14 two-stop diagnostic showed that advancing the probe to
+        // the right clipped the purple landing preview at the board edge.
+        // For the horizontal purple four-strip, first move one safe board cell
+        // LEFT of the prior interior anchor; then use the prior anchor as the
+        // second stop. This preserves the two-position test but frees a full
+        // column to the right of both raised piece/preview footprints.
+        val purpleStrip = plan.observed.tileColor == "PURPLE" &&
+            plan.piece.normalized.size == 4 &&
+            plan.piece.normalized.all { it.r == 0 } &&
+            plan.piece.normalized.map { it.c }.sorted() == listOf(0,1,2,3)
+        val probeAnchor = if (purpleStrip &&
+            isSafeAnchor(plan, preferredAnchor.first, preferredAnchor.second - 1))
+            (preferredAnchor.first to preferredAnchor.second - 1)
+            else preferredAnchor
         // Shift the estimated finger endpoint by the same grid displacement.
         // GripMapping learns from the actual probe endpoint and measured shadow,
         // so this does not alter the final green-preview destination.
@@ -840,7 +862,9 @@ class CaptureService : Service() {
             plan.move.row,plan.move.col,plan.observed.tileColor,
             probeAnchor.first,probeAnchor.second)
         val possibleSecond=if (OccludedPurpleShadow.supported(baseTarget))
-            alternateProbeAnchor(plan,probeAnchor) else null
+            (if (probeAnchor != preferredAnchor &&
+                isSafeAnchor(plan,preferredAnchor.first,preferredAnchor.second))
+                preferredAnchor else alternateProbeAnchor(plan,probeAnchor)) else null
         if (OccludedPurpleShadow.supported(baseTarget) && possibleSecond==null) {
             setStatus("CAL DRAG blocked: this purple four-strip needs two safe probe positions. " +
                 "Move manually or wait for a safer board; do not guess calibration.")

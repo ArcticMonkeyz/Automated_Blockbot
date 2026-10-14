@@ -1,4 +1,4 @@
-RockBlockBot v4.4.10 diagnostic files
+RockBlockBot v4.4.11 diagnostic files
 
 After PREVIEW, tap CAL DRAG once. Wait until the full gesture has finished.
 To export, go back to RockBlockBot, then tap EXPORT DIAGNOSTICS and save to Downloads.

@@ -5,6 +5,9 @@ import kotlin.math.abs
 /**
  * Conservative rescue detector for the four-wide purple strip when the raised
  * (opaque) piece covers all but the trailing end of the translucent landing preview.
+ * The tight preview fringe visible in the Oct 14 two-position export measured
+ * 0.22 at its exposed end; 0.28 was too strict. 0.19 is a guarded rescue
+ * threshold, not an independent authorization to calibrate or place.
  *
  * No result from this detector may independently enable NEXT MOVE: two distinct
  * finger endpoints must yield matching one-cell displacement AND the piece must
@@ -58,22 +61,22 @@ object OccludedPurpleShadow {
             if(target.probeCol!=null && abs(c-target.probeCol)>4)continue
             val indices=(0..3).map{r*8+c+it}
             if(indices.any{(target.occupied and (1L shl it))!=0L})continue
-            val g=indices.count{ghost[it]>=.28}
+            val g=indices.count{ghost[it]>=.19}
             val s=indices.count{solid[it]>=.36}
-            val filled=indices.count{ghost[it]>=.28 || solid[it]>=.36}
+            val filled=indices.count{ghost[it]>=.19 || solid[it]>=.36}
             // Solid strip covers 3 cells and a separate exposed cell shows ghost.
             // No single-pixel or all-solid footprint can ever pass.
             if(g!=1 || s<3 || filled!=4)continue
-            val ghostIndex=indices.indexOfFirst{ghost[it]>=.28}
+            val ghostIndex=indices.indexOfFirst{ghost[it]>=.19}
             if(ghostIndex!=3 && ghostIndex!=0)continue // exposed end only
             val score=indices.sumOf { i -> maxOf(ghost[i],solid[i]) }/4.0
             candidates.add(Candidate(r,c,score,g,s))
         }
         val ranked=candidates.sortedByDescending{it.score}
         val best=ranked.firstOrNull() ?: return Scan(null,
-            "No four-cell opaque/ghost composite (requires 3 solids plus an exposed ghost end)")
+            "No usable exposed preview fringe (needs 3 solid cells plus an exposed ghost end; near board edge, move probe left)")
         val gap=best.score-(ranked.getOrNull(1)?.score ?: 0.0)
-        val stats="best r${best.r+1} c${best.c+1}, solids ${best.solids}/4, ghost ends ${best.ghosts}, " +
+        val stats="best r${best.r+1} c${best.c+1}, solids ${best.solids}/4, visible preview-end ${best.ghosts}, " +
             "strength ${"%.2f".format(java.util.Locale.US,best.score)}, margin ${"%.2f".format(java.util.Locale.US,gap)}"
         if(ranked.size>1 && gap<.10) return Scan(null,"Ambiguous composite: $stats")
         if(best.score<.46)return Scan(null,"Weak composite: $stats")

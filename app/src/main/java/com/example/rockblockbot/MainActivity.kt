@@ -76,7 +76,7 @@ class MainActivity : Activity() {
         fun button(value: String, fn: () -> Unit) {
             layout.addView(Button(this).apply { text=value; setOnClickListener { fn() } })
         }
-        label("Rock Block Bot v4.4.10 — occlusion-aware dual probe",22f)
+        label("Rock Block Bot v4.4.11 — left-safe purple dual probe",22f)
         label("1. Enable overlay/accessibility and SHARE A SINGLE APP: Rock Block Saga. " +
             "2. PREVIEW only when all real pieces are recognized. The numbered cyan " +
             "markers must match each visible tray tile and the green cells are the intended placement. " +

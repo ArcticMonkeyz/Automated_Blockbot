@@ -1,4 +1,4 @@
-RockBlockBot v4.4.10 — EXPORT DIAGNOSTICS
+RockBlockBot v4.4.11 — EXPORT DIAGNOSTICS
 
 Open app -> EXPORT DIAGNOSTICS (save ZIP to phone) -> Downloads -> Save.
 Upload the resulting ZIP to the chat.
