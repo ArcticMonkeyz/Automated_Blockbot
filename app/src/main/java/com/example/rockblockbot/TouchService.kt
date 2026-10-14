@@ -5,99 +5,169 @@ import android.accessibilityservice.GestureDescription
 import android.graphics.Path
 import android.view.accessibility.AccessibilityEvent
 
-/** Serial Android gesture segments that keep ONE finger pressed while vision
- * checks the live game. Every segment continues the preceding StrokeDescription.
- * A segment completion is not a placement; only release commits the move.
+/**
+ * One continuous accessibility finger, with a keep-alive gesture dispatched
+ * immediately after EVERY successful segment. Computer vision runs separately
+ * while the finger is already being held by the next Android segment.
+ *
+ * In v4.4 the screen-capture/UI callback had to request the next segment, and
+ * a brief delay caused Android to cancel it. Here the accessibility service
+ * owns continuation and callers QUEUE movement/release commands instead.
+ * Only one finger and one move are supported at a time.
  */
 class TouchService : AccessibilityService() {
     companion object { @Volatile var current: TouchService? = null; private set }
+
+    private enum class Action { MOVE, RELEASE }
+    private data class Command(
+        val action: Action, val x: Float, val y: Float, val durationMs: Long,
+        val callback: (Boolean, String) -> Unit
+    )
+
     private var lastStroke: GestureDescription.StrokeDescription? = null
-    private var fingerX=0f
-    private var fingerY=0f
-    private var pickupX=0f
-    private var pickupY=0f
-    private var busy=false
-    val isHolding get() = lastStroke != null
+    private var fingerX = 0f
+    private var fingerY = 0f
+    private var pickupX = 0f
+    private var pickupY = 0f
+    private var held = false
+    private var busy = false
+    private var pending: Command? = null
+    private var segmentNumber = 0
+    private var failureReporter: ((Boolean, String) -> Unit)? = null
+
+    val isHolding get() = held
     val isBusy get() = busy
 
-    override fun onServiceConnected() { super.onServiceConnected(); current=this }
-    override fun onDestroy() { lastStroke=null; if(current===this)current=null; super.onDestroy() }
+    override fun onServiceConnected() { super.onServiceConnected(); current = this }
+    override fun onDestroy() { reset(); if (current === this) current = null; super.onDestroy() }
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
     override fun onInterrupt() {}
 
-    fun beginHeldDrag(fromX:Float,fromY:Float,toX:Float,toY:Float,
-                      callback:(Boolean,String)->Unit):Boolean {
-        if(busy || lastStroke!=null) return false
-        pickupX=fromX;pickupY=fromY;fingerX=toX;fingerY=toY
-        val path=Path().apply { moveTo(fromX,fromY);lineTo(toX,toY) }
-        val stroke=GestureDescription.StrokeDescription(path,0,900,true)
-        busy=true
-        return dispatchSegment(stroke,true,callback)
+    private fun reset() {
+        held = false
+        busy = false
+        lastStroke = null
+        pending = null
+        failureReporter = null
     }
 
-    /** Continue the held pointer. Use a slow move followed by a separate hold
-     * segment before evaluating the shadow; don't measure midway through motion.
+    private fun fail(reason: String, extra: ((Boolean, String) -> Unit)? = null) {
+        val owner = failureReporter
+        val queued = pending?.callback
+        reset()
+        owner?.invoke(false, reason)
+        if (queued !== owner) queued?.invoke(false, reason)
+        if (extra !== owner && extra !== queued) extra?.invoke(false, reason)
+    }
+
+    /** Travel into the playable board on the FIRST stroke. It must not stop in
+     * the tray waiting for a shadow that the game cannot display there.
      */
-    fun continueHeldDrag(toX:Float,toY:Float, durationMs:Long=950L,
-                         callback:(Boolean,String)->Unit):Boolean {
-        if(busy) return false
-        val previous=lastStroke ?: return false
-        val stationary=(toX==fingerX && toY==fingerY)
-        val endX=if(stationary)toX+.2f else toX
-        val endY=if(stationary)toY+.2f else toY
-        val path=Path().apply {
-            moveTo(fingerX,fingerY)
-            lineTo(endX,endY)
+    fun beginHeldDrag(fromX: Float, fromY: Float, toX: Float, toY: Float,
+                      callback: (Boolean, String) -> Unit): Boolean {
+        if (held || busy) return false
+        pickupX = fromX; pickupY = fromY
+        fingerX = fromX; fingerY = fromY
+        segmentNumber = 0
+        failureReporter = callback
+        held = true
+        val path = Path().apply { moveTo(fromX, fromY); lineTo(toX, toY) }
+        val first = GestureDescription.StrokeDescription(path, 0, 1250L, true)
+        val started = dispatchSegment(first, toX, toY, true, null, callback)
+        if (!started) reset()
+        return started
+    }
+
+    /** Nonblocking: queue a movement for the next segment boundary. Android's
+     * pointer is already kept down by the active continuation segment.
+     */
+    fun continueHeldDrag(toX: Float, toY: Float, durationMs: Long = 750L,
+                         callback: (Boolean, String) -> Unit): Boolean {
+        if (!held || pending != null) return false
+        pending = Command(Action.MOVE, toX, toY, durationMs.coerceIn(300L, 1300L), callback)
+        return true
+    }
+
+    /** Release only when the game's observed placement ghost matches target. */
+    fun releaseHeldDrag(callback: (Boolean, String) -> Unit): Boolean {
+        if (!held || pending != null) return false
+        pending = Command(Action.RELEASE, fingerX, fingerY, 220L, callback)
+        return true
+    }
+
+    /** Abort attempts to return the held piece toward its original tray slot.
+     * This is NOT guaranteed after Android has cancelled the finger.
+     */
+    fun returnToTray(callback: (Boolean, String) -> Unit): Boolean {
+        if (!held) { callback(false, "No held pointer; check board and tray"); return false }
+        // A STOP/safety abort takes priority over a queued corrective move.
+        // An already-queued release cannot be undone safely.
+        if (pending?.action == Action.RELEASE) return false
+        pending = null
+        return continueHeldDrag(pickupX, pickupY, 850L) { moved, msg ->
+            if (!moved) callback(false, "Return failed: $msg")
+            else if (!releaseHeldDrag { released, detail ->
+                callback(released, "Tray release: $detail")
+            }) callback(false, "Could not queue tray release")
         }
-        val stroke=try { previous.continueStroke(path,0,durationMs,true) }
-                   catch(e:Exception){ callback(false,"Continue failed: ${e.message}");return false }
-        fingerX=endX;fingerY=endY;busy=true
-        return dispatchSegment(stroke,true,callback)
     }
 
-    fun releaseHeldDrag(callback:(Boolean,String)->Unit):Boolean {
-        if(busy) return false
-        val previous=lastStroke ?: return false
-        val path=Path().apply { moveTo(fingerX,fingerY);lineTo(fingerX+.2f,fingerY+.2f) }
-        val stroke=try { previous.continueStroke(path,0,220,false) }
-                   catch(e:Exception){callback(false,"Release failed: ${e.message}");return false}
-        busy=true
-        return dispatchSegment(stroke,false,callback)
+    /** Never wait for a UI or vision callback before requesting the next hold. */
+    private fun continueImmediately(): Boolean {
+        if (!held) return false
+        val preceding = lastStroke ?: return false
+        val command = pending
+        pending = null
+        val nextX = if (command?.action == Action.MOVE) command.x else fingerX
+        val nextY = if (command?.action == Action.MOVE) command.y else fingerY
+        val continueAfter = command?.action != Action.RELEASE
+        val duration = command?.durationMs ?: 850L
+        // Zero-distance paths are valid Android touch-and-hold strokes. Keep
+        // both endpoints identical to avoid cumulative 0.2px finger drift.
+        val path = Path().apply { moveTo(fingerX, fingerY); lineTo(nextX, nextY) }
+        val stroke = try {
+            preceding.continueStroke(path, 0L, duration, continueAfter)
+        } catch (e: Exception) {
+            fail("Cannot chain held segment: ${e.message}", command?.callback)
+            return false
+        }
+        val ok = dispatchSegment(stroke, nextX, nextY, continueAfter, command, null)
+        if (!ok) fail("Android rejected continuation segment ${segmentNumber + 1}", command?.callback)
+        return ok
     }
 
-    /** Safe-abort attempt: drag back to pickup, THEN release in the tray.
-     * This is best-effort, not a guarantee if Android cancels the gesture.
-     */
-    fun returnToTray(callback:(Boolean,String)->Unit):Boolean {
-        if(busy) return false
-        if(lastStroke==null) { callback(true,"No finger held");return true }
-        val accepted=continueHeldDrag(pickupX,pickupY,800L) { success,msg ->
-            if(!success) callback(false,"Return travel failed: $msg")
-            else {
-                val ok=releaseHeldDrag { released,detail ->
-                    callback(released,"Returned toward tray: $detail")
+    private fun dispatchSegment(
+        stroke: GestureDescription.StrokeDescription,
+        nextX: Float, nextY: Float, continueAfter: Boolean,
+        command: Command?, firstCallback: ((Boolean, String) -> Unit)?
+    ): Boolean {
+        val segment = ++segmentNumber
+        busy = true
+        val gesture = GestureDescription.Builder().addStroke(stroke).build()
+        val accepted = dispatchGesture(gesture, object : GestureResultCallback() {
+            override fun onCompleted(gestureDescription: GestureDescription?) {
+                if (!held) return
+                busy = false
+                fingerX = nextX; fingerY = nextY
+                lastStroke = if (continueAfter) stroke else null
+                // Crucially, schedule the next Android stroke HERE, not from
+                // the service's delayed UI/frame-processing callback.
+                if (continueAfter) {
+                    if (!continueImmediately()) return
+                } else {
+                    reset()
                 }
-                if(!ok) callback(false,"Return release could not start")
+                firstCallback?.invoke(true, "Initial travel completed; held pointer continues")
+                command?.callback?.invoke(true,
+                    if (continueAfter) "Segment $segment completed; finger remains held"
+                    else "Segment $segment completed; pointer released")
             }
-        }
-        return accepted
-    }
 
-    private fun dispatchSegment(stroke:GestureDescription.StrokeDescription, continuing:Boolean,
-                                callback:(Boolean,String)->Unit):Boolean {
-        val gesture=GestureDescription.Builder().addStroke(stroke).build()
-        val accepted=dispatchGesture(gesture,object:GestureResultCallback(){
-            override fun onCompleted(gestureDescription:GestureDescription?) {
-                busy=false
-                lastStroke=if(continuing)stroke else null
-                callback(true,if(continuing)"Pointer held" else "Pointer released")
+            override fun onCancelled(gestureDescription: GestureDescription?) {
+                if (held) fail("Android cancelled continuous gesture segment $segment", command?.callback)
             }
-            override fun onCancelled(gestureDescription:GestureDescription?) {
-                busy=false;lastStroke=null
-                callback(false,"Android cancelled a held-drag segment")
-            }
-        },null)
-        if(!accepted){busy=false;lastStroke=null}
-        return accepted
+        }, null)
+        if (!accepted) { busy = false; return false }
+        return true
     }
 }

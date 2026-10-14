@@ -1,15 +1,14 @@
-RockBlockBot v4.4 - GAME SHADOW GUIDED PLACEMENT TRIAL
+RockBlockBot v4.4.1 - HELD TOUCH + BOARD ENTRY EXPERIMENT
 
-1. Extract the ZIP on your PC.
-2. GitHub Desktop > Repository > Show in Explorer.
-3. Copy CONTENTS of RockBlockBot-v4.4 into the existing clone; replace matching files.
-4. Preserve .git and .github folders (the existing Actions workflow builds your APK).
-5. Commit, Push origin, then wait for Build debug APK; install APK.
-6. Share SINGLE APP -> Rock Block Saga; PREVIEW, inspect all numbered tile markers.
-7. NEXT MOVE ONLY for correct shapes. The app will hold the piece, look for
-   the game's same-color translucent shadow, correct, and only release after
-   two shadow alignment checks. Otherwise it tries to return to tray.
-8. Wait up to 30 seconds; if no VERIFIED, STOP and send full report.
+1. Extract ZIP. Copy its project contents into your existing GitHub Desktop repository.
+2. Keep hidden .git and .github folders from your old clone.
+3. Commit, Push origin, then open GitHub Actions > Build debug APK.
+4. Install the produced APK over your old Blockbot app.
+5. Share single app (Rock Block Saga). PREVIEW and inspect cyan tile counts.
+6. Tap NEXT MOVE for ONE correct piece; watch that it MOVES ONTO THE BOARD,
+   unlike the v4.4 attempt that moved only 42px up in the tray.
+7. Shadow must match the green target twice before release. If tracking fails
+   or Android cancels, STOP, inspect the game, and send the full report.
+8. Do not assume a held gesture succeeded merely because Android accepted it.
 
-This is an experimental movement controller. The full Android Gradle build
-was NOT run locally; the game shadow detector is NOT yet live-verified.
+Android build and real-world shadow alignment remain unverified locally.

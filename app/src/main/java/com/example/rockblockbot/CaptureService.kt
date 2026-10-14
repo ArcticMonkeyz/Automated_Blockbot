@@ -392,9 +392,12 @@ class CaptureService : Service() {
         val (effectiveX,effectiveY) = effectiveOffsets(plan,screen)
         val fromX = plan.observed.gripX * sx
         val fromY = plan.observed.gripY * sy
-        val toX = (163f + (plan.move.col + plan.observed.gripCol)*55f) * sx + effectiveX
-        val toY = (454f + (plan.move.row + plan.observed.gripRow)*55f) * sy + effectiveY
-        return floatArrayOf(fromX,fromY,toX,toY)
+        val rawToX = (163f + (plan.move.col + plan.observed.gripCol)*55f) * sx + effectiveX
+        val rawToY = (454f + (plan.move.row + plan.observed.gripRow)*55f) * sy + effectiveY
+        // The old guessed endpoint can be below the board. For shadow-guided
+        // control it is only an approach point, NOT a place to release.
+        val approach = DragApproach.boardEntry(rawToX, rawToY, screen.x, screen.y)
+        return floatArrayOf(fromX, fromY, approach.x, approach.y)
     }
 
     private fun updateMarker() {
@@ -413,7 +416,8 @@ class CaptureService : Service() {
         shapeCalibrationLabel?.text = "Current ${plan.observed.tileColor} ${plan.observed.signature}: " +
             "extra X=${personal.xPx}, Y=${personal.yPx}px (saved per shape+color)"
         coordsLabel?.text = "Finger: (${coords[0].toInt()}, ${coords[1].toInt()})" +
-            " -> (${coords[2].toInt()}, ${coords[3].toInt()}) px; effective X=$actualX Y=$actualY"
+            " -> BOARD ENTRY (${coords[2].toInt()}, ${coords[3].toInt()}) px; " +
+            "shadow controls release; old offset X=$actualX Y=$actualY"
         if (marker == null) {
             marker = CalibrationOverlay(this)
             val params = WindowManager.LayoutParams(
@@ -475,6 +479,16 @@ class CaptureService : Service() {
         if (frame?.missingVisiblePiece == true) {
             setStatus("PREVIEW BLOCKED: At least one colored tray piece was not recognized. " +
                 "Do NOT use RESUME to skip it. STOP and send the report.")
+            return
+        }
+        // The historic geometric fallback once interpreted a green 2x2 as a
+        // six-block rectangle. Never plan around an unverified fallback.
+        val doubtful = frame?.pieces?.indexOfFirst { p ->
+            p != null && p.tileCenters.size != p.count
+        } ?: -1
+        if (doubtful >= 0) {
+            setStatus("PREVIEW BLOCKED: Piece ${doubtful + 1} lacks confirmed individual tile " +
+                "centers. Wait for a new frame; never move a guessed block count.")
             return
         }
         if (frame == null || frame.recognized != expectedPieces || stableCount < 3 ||
@@ -576,12 +590,12 @@ class CaptureService : Service() {
         lastGestureOutcome="Holding pointer; waiting for game's placement shadow"
         lastTouchPath="Piece ${plan.move.pieceIndex+1} ${plan.observed.signature}: " +
             "pickup (${coordinates[0].toInt()},${coordinates[1].toInt()}); " +
-            "first guess (${coordinates[2].toInt()},${coordinates[3].toInt()}); " +
-            "closed-loop shadow tracking, no blind release"
+            "first BOARD ENTRY (${coordinates[2].toInt()},${coordinates[3].toInt()}); " +
+            "continuous hold with shadow tracking, no blind release"
         lastPlacementCheck="PENDING: Tracking game placement shadow before release."
         lastShadowTracking="Waiting for live translucent ${plan.observed.tileColor} placement ghost."
-        shapeLabel?.text="Holding piece. Tracking the game's colored placement shadow..."
-        setStatus("Closed-loop drag: only release after game ghost matches planned cells.")
+        shapeLabel?.text="Moving onto board while holding. Looking for colored placement shadow..."
+        setStatus("Moving toward board; release only after game shadow matches target.")
         val started=touch.beginHeldDrag(t.pickupX,t.pickupY,t.fingerX,t.fingerY) { ok,why ->
             handler.post {
                 if(tracking!==t || stopped)return@post
@@ -599,15 +613,13 @@ class CaptureService : Service() {
             abortTracking("18-second shadow tracking timeout")
             return
         }
-        val holdStarted=SystemClock.elapsedRealtime()
-        val ok=TouchService.current?.continueHeldDrag(t.fingerX,t.fingerY,1050L){success,msg->
-            handler.post {
-                if(tracking!==t || stopped)return@post
-                if(!success)dragFailure(t,msg)
-                else evaluateShadow(t,holdStarted)
-            }
-        } ?: false
-        if(!ok)dragFailure(t,"Android refused held-pointer continuation")
+        // TouchService dispatches hold continuations immediately from Android's
+        // gesture callbacks. Do NOT restart a hold from this delayed UI callback:
+        // that exact gap caused cancelled gestures on the user's device.
+        val observationStarted=SystemClock.elapsedRealtime()
+        handler.postDelayed({
+            if(tracking===t && !stopped) evaluateShadow(t,observationStarted)
+        },850L)
     }
 
     private fun evaluateShadow(t: TrackingMove, holdStart: Long) {
@@ -723,14 +735,8 @@ class CaptureService : Service() {
     private fun abortTracking(reason: String) {
         val t=tracking ?: return
         val touch=TouchService.current
-        // A pending Android segment must finish before a return gesture can
-        // continue the same pointer. Defer STOP/abort to that callback.
-        if(touch?.isBusy == true) {
-            pendingAbortReason=reason
-            shapeLabel?.text="Waiting for active gesture segment, then returning to tray..."
-            setStatus("Safe abort requested: $reason")
-            return
-        }
+        // TouchService maintains the finger and queues the tray-return motion
+        // for the next segment boundary; no main-thread timing gap is needed.
         pendingAbortReason=null
         shadowTarget=null
         lastPlacementCheck="UNVERIFIED: Visual alignment not confirmed: $reason. " +

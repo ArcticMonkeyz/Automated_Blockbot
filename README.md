@@ -1,37 +1,32 @@
-# RockBlockBot v4.4 — Live game-shadow guided placement (experimental)
+# Rock Block Bot v4.4.1 — Board-entry + continuous held-touch trial
 
-**Research/test update. Not a guarantee of accurate placement.** The v4.3 source-tile recognition, solver, preview, and per-piece saved calibration have been retained. The movement controller has been replaced with a serial held-touch visual-feedback controller.
+**Experimental. Not yet verified on a real phone. Do not use unattended.**
+
+This version addresses the two separate problems in the v4.4 screenshots: green 2×2 squares were successfully identified by four cyan tile markers, but the initial drag traveled only `(512,1804) -> (499,1762)` (still inside the tray area) and a later Android continued segment was cancelled. Since the game displays its translucent placement shadow only near/over the board, there was no usable shadow to track.
 
 ## What changed
 
-- When you press NEXT MOVE, the bot starts an accessibility gesture with `willContinue=true` instead of releasing on its first guessed endpoint.
-- While the finger stays down, MediaProjection samples actual **game-produced translucent placement shadows**. The overlay is hidden during tracking so it does not contaminate image analysis.
-- The shadow detector uses the **detected piece color** (red/green/blue/purple/yellow), ignores previously occupied board cells, and compares candidate shadow *footprints* to the solver's target coordinates (the same grid cells displayed as green during PREVIEW).
-- It only calls `releaseHeldDrag` after **two separate, sufficiently confident held-shadow observations** match the target. When the ghost is at another valid placement, it corrects the held pointer by up to two board cells and checks again.
-- An initial missing shadow triggers a limited search toward the board centre. Tracking stops after at most five corrections or 18 seconds. It then **attempts to drag back to the tray and release there**. Android may still cancel unexpectedly, so return is **not guaranteed**.
-- STOP pressed during a gesture requests a safe return-to-tray; after it finishes, press STOP again to remove the controls. The app still requires a fresh user-confirmed PREVIEW before each move; no unattended play.
-- New report line **Last game shadow tracking** describes color, measured position, confidence, and tracking failures. After an aligned release, the post-release board is still independently checked.
+1. **Board-entry on the very first stroke:** The old calibrated finger endpoint is treated as an initial guess. If it's outside the board's playable rectangle, it is **clamped into the board**. For the specific failed screenshot `(499,1762)` becomes approximately `(499,1154)` on a 1080×2169 display. The first 1250 ms stroke moves there while holding the finger. This is **NOT** an automatic release.
+2. **TouchService now owns the continuous hold:** Android's `StrokeDescription.continueStroke` is called *immediately* from each segment completion callback. A new stationary segment is dispatched before any UI or image-processing callback is run. The main app queues position changes or a final release, rather than dispatching held segments itself after delayed screen processing.
+3. **Visual controller:** MediaProjection still samples the game's matching-color translucent placement shadow and compares it to Blockbot's green planned board cells. Alignment must be seen twice in distinct fresh frames before a release is queued. Offsets trigger small corrective movements. A missing/ambiguous shadow never authorizes release.
+4. **No guessing from legacy shapes:** The PREVIEW is blocked when any recognized tray piece lacks an individual-tile-center count matching its reported block count. The earlier green 2×2 vs 6-block legacy fallback must not become a move.
+5. **STOP/abort:** An attempted return-to-tray is prioritized over pending corrective movements. If Android cancels the touch, the piece may release; inspect the board and do not automatically retry.
+6. The survival solver, existing tile-center recognizer, manually confirmed PREVIEW/NEXT MOVE flow, original per-piece saved calibration, game-shadow tracker and post-release verification remain present. Previous global X/Y values are only used to choose the initial approach and **never authorize release**.
 
-## Critical limitation
+## Safe test
 
-Only a screenshot of a partially occluded **red** placement shadow has been supplied; ghosts in other colors and different states have **not yet been verified on a running device**. The detector's five-color thresholds currently use general color characteristics and synthetic tests. A lifted solid tile may obscure too many ghost cells, in which case the tracker deliberately refuses to release and attempts a return. The game or Android may cancel ongoing touches. Do not rely on this for high-stakes or unattended automation.
+1. Extract this ZIP and copy **its contents** to your existing GitHub Desktop clone, replacing matching files but retaining hidden `.git` and `.github` folders.
+2. Commit, push, build the APK through your existing GitHub Actions workflow and install it.
+3. Use **Share a single app > Rock Block Saga**. Press **PREVIEW**, check the cyan circles and green target squares. **Do not press NEXT MOVE** for any wrong piece count/shape.
+4. For one correct preview, press **NEXT MOVE once**. Do not touch the game during the 20–30 second experiment. The piece should **travel toward/over the board immediately** instead of moving only 40px in the tray.
+5. If shadow alignment succeeds, Blockbot releases and verifies. Otherwise it attempts to return the held piece and stops with **UNVERIFIED**. A cancelled Android gesture is *not* proof of placement or recovery.
+6. If it fails, press STOP after movement has ended and send the overlay and the report lines **Last touch path**, **Last game shadow tracking**, **Last placement check**. These distinguish a gesture failure from an invisible shadow.
 
-## Install & safe first test
+**Limitations:** Android kept-stroke continuity and the live game's shadow colors cannot be fully validated without the phone. Synthetic shadow tracking passes for all five colors, but the real red sample was partially occluded and remains intentionally inconclusive. The code's held-touch lifecycle passed a local simulated Android callback test, not a hardware test. The full APK must be built via GitHub Actions.
 
-1. Extract ZIP; copy this folder's **contents** to your existing GitHub Desktop repo. Keep hidden `.git` and `.github` untouched. Push changes and build debug APK using GitHub Actions.
-2. Install over your current app; use **Share a single app > Rock Block Saga**.
-3. PREVIEW. All three pieces must be recognized if all are present. Inspect numbered source tile rings and **green target squares**. Do not NEXT MOVE for an inaccurate shape.
-4. NEXT MOVE once. Wait up to **30 seconds** while it holds, scans, adjusts and verifies. DO NOT manually drag another piece during this time.
-5. If the game shadow cannot be confidently tracked, the app should attempt to return the piece to the tray and show UNVERIFIED. If that happens, STOP and send the status and **Last game shadow tracking** report. Do not use RESUME to skip an unidentified piece.
-6. If VERIFIED, PREVIEW before NEXT MOVE again.
+## Local checks
 
-Your old saved X/Y and per-piece calibrations are retained as **first-guess positioning only**; they no longer authorize unconditional release.
-
-## Validation performed
-
-- Host-compiled `ShadowTracker.kt` and tested synthetic color shadows, varied shapes (horizontal, vertical, L, T, square, five-high), wrong-position detection and missing-shadow refusal.
-- Verified the supplied partially occluded held-red example is **not incorrectly authorized** as a high-confidence placement.
-- Host-compiled the new continued-touch `TouchService.kt` against Android API signature stand-ins.
-- Existing recognizer and calibration tests are packaged unchanged; the full Android build and live touch/capture synchronization **must be tested through your GitHub Actions build and phone**.
-
-This design is based on standard visual servoing: the target is the bot's planned green board footprint, but the feedback signal is **the game's actual predicted landing shadow**, rather than the raised solid tile.
+- `sh tests/CompileRecognitionSmoke.sh`
+- `sh tests/RunScreenshotRecognition.sh your_game_screenshot.png`
+- `kotlinc app/src/main/java/com/example/rockblockbot/DragApproach.kt tests/DragApproachTest.kt -include-runtime -d /tmp/approach.jar && java -jar /tmp/approach.jar`
+- `kotlinc app/src/main/java/com/example/rockblockbot/TouchService.kt tests/TouchServiceStubs.kt tests/TouchGraphicsStubs.kt tests/TouchEventStubs.kt tests/TouchSequencerTest.kt -include-runtime -d /tmp/touch.jar && java -jar /tmp/touch.jar`
