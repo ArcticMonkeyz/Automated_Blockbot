@@ -677,6 +677,38 @@ class CaptureService : Service() {
      * that path. No calibration is saved unless multiple samples agree AND the
      * board/tray return to their pre-probe state.
      */
+    /** Select a legal, preferably interior probe footprint. The actual move target
+     * stays unchanged; only the temporary out-and-back calibration destination moves.
+     * Keep at least one cell of breathing room around the raised piece when possible.
+     */
+    private fun safeProbeAnchor(plan: Prepared): Pair<Int, Int>? {
+        val cells = plan.piece.normalized
+        if (cells.isEmpty()) return null
+        val occupied = plan.frame.board
+        val options = ArrayList<Triple<Int, Int, Int>>()
+        for (r in 0..7) for (c in 0..7) {
+            var legal = true
+            for (cell in cells) {
+                val rr = r + cell.r; val cc = c + cell.c
+                if (rr !in 0..7 || cc !in 0..7 ||
+                    (occupied and (1L shl (rr * 8 + cc))) != 0L) { legal = false; break }
+            }
+            if (!legal) continue
+            val maxR = r + cells.maxOf { it.r }
+            val maxC = c + cells.maxOf { it.c }
+            val edge = minOf(r, c, 7-maxR, 7-maxC)
+            var neighbours = 0
+            for (cell in cells) for (dr in -1..1) for (dc in -1..1) {
+                val rr = r+cell.r+dr; val cc = c+cell.c+dc
+                if (rr in 0..7 && cc in 0..7 &&
+                    (occupied and (1L shl (rr*8+cc))) != 0L) neighbours++
+            }
+            val distance = kotlin.math.abs(r-plan.move.row)+kotlin.math.abs(c-plan.move.col)
+            options.add(Triple(r,c,edge*100-neighbours*12-distance*4))
+        }
+        return options.maxByOrNull { it.third }?.let { it.first to it.second }
+    }
+
     private fun calibrateSingleStroke() {
         if (inProgress || sessionBlocked) return
         val plan=prepared ?: run { setStatus("Press PREVIEW before CAL DRAG."); return }
@@ -689,6 +721,14 @@ class CaptureService : Service() {
         }
         val coords=gestureCoords(plan)
         val screen=screenSize()
+        val probeAnchor = safeProbeAnchor(plan) ?: run {
+            setStatus("CAL DRAG blocked: no legal probe footprint."); return
+        }
+        // Shift the estimated finger endpoint by the same grid displacement.
+        // GripMapping learns from the actual probe endpoint and measured shadow,
+        // so this does not alter the final green-preview destination.
+        coords[2] += (probeAnchor.second-plan.move.col)*ShadowTracker.pitchX(screen.x)
+        coords[3] += (probeAnchor.first-plan.move.row)*ShadowTracker.pitchY(screen.y)
         if(coords.any { it !in 12f..(screen.y-12f) } || coords[0]>=screen.x-12 || coords[2]>=screen.x-12) {
             setStatus("Calibration BLOCKED: invalid finger coordinates."); return
         }
@@ -712,8 +752,9 @@ class CaptureService : Service() {
             plan.move.row, plan.move.col, plan.observed.tileColor)
         lastTouchPath="CAL DRAG for ${plan.observed.tileColor} ${plan.observed.signature}: " +
             "planned preview top-left r${plan.move.row+1} c${plan.move.col+1}; " +
+            "safe probe r${probeAnchor.first+1} c${probeAnchor.second+1}; " +
             "pickup (${coords[0].toInt()},${coords[1].toInt()}) -> " +
-            "preview-derived board approach (${coords[2].toInt()},${coords[3].toInt()}) " +
+            "interior board approach (${coords[2].toInt()},${coords[3].toInt()}) " +
             "-> back to tray (ONE stroke)."
         lastShadowTracking="Calibrating: sampling the game's colored shadow at " +
             "${probeSampleWindow.fromMs}-${probeSampleWindow.toMs} ms while " +
