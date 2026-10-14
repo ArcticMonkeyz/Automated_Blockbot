@@ -1,32 +1,36 @@
-# Rock Block Bot v2.4 - visual drag calibration
+# Rock Block Bot v2.5 — Guided Multi-Move + Shape-Aware Solver
 
-Experimental Android project for the 8x8 Rock Block Saga puzzle. This is a **single-move diagnostic build**, not a continuous player. It is not yet verified on a Pixel 7 Pro.
+Android application for Pixel 7 Pro and similar devices. This is a **test build**: it is not unattended gameplay.
 
-## Changes from v2.3
+## Changes since v2.4
 
-- **PREVIEW** calculates the solver's first placement and shows a noninteractive overlay: green squares for the planned board cells, blue ring for drag start, red crosshair for the finger release endpoint. PREVIEW does **not** touch the game.
-- **X - / X + / Y - / Y +** shift the release endpoint by 20 *screen* pixels per press. Adjustments persist across sessions. They do not alter the solver's board-cell target.
-- The old estimated +95 reference-pixel vertical drag offset is removed. New offsets start at 0 and can be tuned experimentally.
-- **MOVE 1** becomes available only after a fresh, stable recognition and a complete three-piece solution. A preview expires after 30 seconds.
-- A single move is attempted per session. No automatic retries. STOP preserves the gesture result.
-- The v2.3 two-stage accessibility drag (850ms travel + 350ms hold/release) is retained.
+- Re-plans from the currently visible 1, 2, or 3 pieces. After one piece is placed, the remaining pieces retain their original screen slot IDs.
+- PREVIEW shows planned cells and the finger release location; NEXT MOVE requires an explicit tap for each placement.
+- Verifies each move by checking the expected board AND the disappearance of the selected piece slot (except when a fresh set of three appears after the final piece). Failed verification locks further moves until the next capture session.
+- Uses a bounded beam search to evaluate possible piece orders and placements, rewarding line clears and consecutive clears while penalizing crowded, isolated boards.
+- Includes 41 fixed-orientation piece footprints from Rock Block Saga v1.1.45 asset analysis to evaluate **future board flexibility**. Exact appearance probabilities and game scoring rules are not known, so the future-piece score is a heuristic, not a guarantee.
+- Retains calibration settings from previous versions, including X=0 and Y=+400 if those were saved on the same installation.
+- Adjusts cyan/blue block recognition to avoid missing blue pieces on the board while rejecting teal background water.
+- Keeps the 350 ms gesture hold/release used in the successful tests.
 
-## Build
+## Install/build
 
-Copy everything *inside* this extracted folder into the existing Automated_Blockbot checkout, replacing matching files. Keep `.git` and `.github` untouched. Commit and push in GitHub Desktop; the existing GitHub Actions workflow builds the debug APK. Java 17 is retained. The application ID is unchanged and versionCode is 6.
+Keep your existing `.github/workflows/build-apk.yml` in the GitHub repository. Extract this ZIP, copy the **contents** into the existing `Automated_Blockbot` GitHub Desktop checkout, preserving `.git` and `.github`, then Commit to main and Push origin. Download the resulting debug APK from GitHub Actions > Artifacts. The Android APK has **not been compiled or tested in this environment**.
 
-## Test on phone
+## Test safely
 
-1. Install the updated debug APK. Enable the app's overlay and accessibility permissions only while testing.
-2. Start capture and choose **Entire screen**. Open Rock Block Saga with all three pieces visible; wait for recognition.
-3. Tap **PREVIEW**. Green squares indicate where the solver wants the piece; blue circle is pickup point; red crosshair is where the simulated finger will release. The green squares are *not* the actual finger endpoint.
-4. If the preview looks implausible, tap STOP. You may adjust X/Y using the floating buttons to change the endpoint marker **before** dragging. Adjustments are persisted.
-5. If you decide to test a move, tap **MOVE 1 only once**. Wait for it to finish, then tap STOP. Inspect the game and the preserved report. Do not test on a level you don't want to risk.
-6. Send screenshots of the preview and the result. If the piece snaps back, we can adjust offsets without rebuilding the APK.
+1. Enable floating overlay and accessibility permissions (if Android disabled them after updating).
+2. Start screen recognition and choose **Entire screen**. Open an active Rock Block Saga board.
+3. Wait for stable recognition; tap **PREVIEW**. Inspect the proposed cells and adjust X/Y if necessary.
+4. Tap **NEXT MOVE** once. Wait for **VERIFIED** before tapping PREVIEW again.
+5. Repeat for the remaining visible pieces. If you see **UNVERIFIED**, STOP and inspect the board; the app will not make more moves in that session.
+6. After three pieces are placed, wait for the next set to appear and tap PREVIEW again. There is **no automatic loop** in v2.5.
 
 ## Limitations
 
-- Touch coordinate mapping is based on a reference 709x1536 screenshot and full-display dimensions; Android's capture size, status bar and insets can differ. The visual overlay itself may need calibration.
-- A successful Android gesture does not prove the game accepted the move.
-- Recognition is experimental; some shapes, obstacles and layouts may be misread. No unattended gameplay is enabled.
-- Android accessibility and screen capture are sensitive permissions; disable them after testing. Check the game's and rewards platform's rules before using automation.
+- The board recognizer uses calibration from a 709x1536 reference game screenshot, scaled to the captured image. Display zoom, different layouts, or different screen sharing modes may break detection or dragging.
+- Some shapes or colors may still be recognized incorrectly. Check PREVIEW before each placement.
+- Piece-generation weights, combo formulas, and special level mechanics are not fully reverse-engineered.
+- The solver uses a bounded beam search, not a proven optimal or clairvoyant policy. It cannot know the next three random pieces.
+- Android reports gesture completion independently from whether the game accepts a placement; board verification is required.
+- Automation may be restricted by the game's or Ero's reward rules.

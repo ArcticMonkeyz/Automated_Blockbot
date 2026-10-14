@@ -1,17 +1,8 @@
-RockBlockBot v2.4 - update existing GitHub repository
-
 1. Extract this ZIP on your PC.
-2. Open GitHub Desktop -> Repository -> Show in Explorer.
-3. Copy everything INSIDE the extracted v2.4 folder into the repository root. Replace matching files.
-4. Keep .git and .github untouched. Do not nest an extra v2.4 folder.
-5. In GitHub Desktop enter: "Blockbot v2.4 drag calibration".
-6. Commit to main, then Push origin.
-7. Wait for the GitHub Actions build to turn green.
-8. Download its APK artifact ZIP, extract app-debug.apk and install it on your Pixel 7 Pro.
-
-Test: allow overlays and accessibility, start capture (Entire screen), open game,
-wait for recognition, tap PREVIEW first. Check the green target cells and red
-finger endpoint. Adjust X/Y in 20-pixel increments if needed. MOVE 1 attempts
-exactly one drag, then STOP. Send a screenshot of the preview and result.
-
-This is a diagnostic app, not a continuous auto-player.
+2. Open GitHub Desktop > Repository > Show in Explorer for ArcticMonkeyz/Automated_Blockbot.
+3. Copy EVERYTHING INSIDE the extracted RockBlockBot-v2.5 folder into the cloned repository root.
+4. Choose Replace files; do NOT delete .git or .github in the existing repository.
+5. In GitHub Desktop, commit with summary: Blockbot v2.5 guided multi-move solver
+6. Push origin. GitHub Actions builds app-debug.apk and packages it as an artifact ZIP.
+7. Install the new APK on your Pixel 7 Pro. If Android reports an update signature conflict, ask for guidance before uninstalling because app settings may be lost.
+8. In game: PREVIEW > NEXT MOVE > wait for VERIFIED > PREVIEW again. STOP if UNVERIFIED.

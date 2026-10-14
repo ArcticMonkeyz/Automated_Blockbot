@@ -33,7 +33,8 @@ object BoardRecognizer {
         return when (color) {
             TileColor.RED -> r > 140 && r > g*1.55 && r > b*1.40 && g < 135
             TileColor.GREEN -> g > 155 && g > r*1.35 && g > b*1.18
-            TileColor.BLUE -> b > 145 && b > g*1.16 && (r < 58 || (g > 185 && b > 225))
+            TileColor.BLUE -> (b > 205 && g > 175 && b > g*1.035 && r < 145) ||
+                (b > 155 && r < 65 && b > g*1.22)
             TileColor.PURPLE -> b > 135 && r > 90 && r > g*1.60 && b > g*1.50
             TileColor.YELLOW -> r > 155 && g > 115 && b < 115 && r > b*1.60
         }

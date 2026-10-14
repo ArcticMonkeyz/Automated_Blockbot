@@ -25,7 +25,7 @@ import java.util.Locale
 import java.util.concurrent.Executors
 import kotlin.math.abs
 
-/** A single, explicitly user-triggered placement. No unattended loop. */
+/** Guided multi-move placement: user must PREVIEW and confirm each move. */
 class CaptureService : Service() {
     private val handler = Handler(Looper.getMainLooper())
     private val worker = Executors.newSingleThreadExecutor()
@@ -56,7 +56,8 @@ class CaptureService : Service() {
     private var stableSignature: String? = null
     private var stableCount = 0
     private var inProgress = false
-    private var moveAttempted = false
+    private var moveCount = 0
+    private var sessionBlocked = false
     private var lastGestureOutcome = "Not tested in this session"
     private var status = "Waiting for an active game board."
     private var stopped = false
@@ -73,7 +74,7 @@ class CaptureService : Service() {
         val f = latest
         val time = if (latestAt > 0) SimpleDateFormat("HH:mm:ss",Locale.US).format(Date(System.currentTimeMillis() - (SystemClock.elapsedRealtime()-latestAt))) else "none"
         val text = "Status: $status\nCalibration: X ${xOffset}px, Y ${yOffset}px\nLast gesture result: $lastGestureOutcome\nLast game frame: $time | stable frames: $stableCount\n\n" +
-            (f?.report() ?: "No game board captured yet.") + "\n\nOne-move test only. STOP removes floating controls."
+            (f?.report() ?: "No game board captured yet.") + "\n\nUser-confirmed moves only. STOP removes floating controls."
         getSharedPreferences("capture",MODE_PRIVATE).edit().putString("report",text).apply()
     }
     private fun setStatus(s: String) { status=s; publish() }
@@ -81,8 +82,8 @@ class CaptureService : Service() {
         if (intent?.action == "STOP") { stopSelf(); return START_NOT_STICKY }
         if (intent?.action != "START" || projection != null) return START_NOT_STICKY
         val notification = Notification.Builder(this,"capture")
-            .setContentTitle("Rock Block Bot: one-move test")
-            .setContentText("Floating MOVE 1 / STOP controls active")
+            .setContentTitle("Rock Block Bot: guided moves")
+            .setContentText("Floating PREVIEW / NEXT MOVE / STOP controls active")
             .setSmallIcon(android.R.drawable.ic_menu_view).setOngoing(true).build()
         startForeground(22,notification,ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
         val prefs = getSharedPreferences("calibration", MODE_PRIVATE)
@@ -127,7 +128,7 @@ class CaptureService : Service() {
             display=projection?.createVirtualDisplay("RockBlockRead",w,h,metrics.densityDpi,
                 DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,reader!!.surface,null,handler)
             createOverlay()
-            setStatus("Capture running. Open Rock Block Saga, then tap PREVIEW. Adjust X/Y before MOVE 1.")
+            setStatus("Capture running. Open Rock Block Saga, tap PREVIEW, then NEXT MOVE. Re-preview after every verified move.")
         } catch (e: Exception) { setStatus("Start failed: ${e.message}"); stopSelf() }
         return START_NOT_STICKY
     }
@@ -140,7 +141,7 @@ class CaptureService : Service() {
         }
         val actions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         previewButton = Button(this).apply { text = "PREVIEW"; setOnClickListener { prepareMove() } }
-        moveButton = Button(this).apply { text = "MOVE 1"; isEnabled = false; setOnClickListener { attemptOneMove() } }
+        moveButton = Button(this).apply { text = "NEXT MOVE"; isEnabled = false; setOnClickListener { attemptOneMove() } }
         actions.addView(previewButton)
         actions.addView(moveButton)
         actions.addView(Button(this).apply { text = "STOP"; setOnClickListener { stopSelf() } })
@@ -173,14 +174,14 @@ class CaptureService : Service() {
     }
 
     private fun adjust(dx: Int, dy: Int) {
-        if (inProgress || moveAttempted) return
+        if (inProgress || sessionBlocked) return
         xOffset = (xOffset + dx).coerceIn(-240,240)
         yOffset = (yOffset + dy).coerceIn(-400,400)
         getSharedPreferences("calibration",MODE_PRIVATE).edit()
             .putInt("x",xOffset).putInt("y",yOffset).apply()
         updateOffsetLabel()
         updateMarker()
-        setStatus("Offsets updated. PREVIEW is visual only; MOVE 1 performs one drag.")
+        setStatus("Offsets updated. PREVIEW is visual only; NEXT MOVE performs one confirmed drag.")
     }
 
     private fun screenSize(): Point = Point().also { point ->
@@ -228,11 +229,11 @@ class CaptureService : Service() {
     }
 
     private fun prepareMove() {
-        if (preparing || inProgress || moveAttempted) return
+        if (preparing || inProgress || sessionBlocked) return
         val frame = latest
-        if (frame == null || frame.recognized != 3 || stableCount < 2 ||
+        if (frame == null || frame.recognized !in 1..3 || stableCount < 2 ||
             SystemClock.elapsedRealtime() - latestAt > 4000L || frame.width >= frame.height) {
-            setStatus("Need a recent stable portrait board and 3 pieces. No preview available.")
+            setStatus("Need a recent stable portrait board and at least one recognized piece.")
             return
         }
         preparing = true
@@ -240,14 +241,14 @@ class CaptureService : Service() {
         setStatus("Calculating a visual preview (no touch gesture)...")
         worker.execute {
             try {
-                val pieces = frame.pieces.map { it!!.asPiece() }
-                val plan = Solver.solve(frame.board,pieces)
+                val available = frame.pieces.mapIndexedNotNull { i,p -> p?.let { i to it.asPiece() } }
+                val plan = Solver.solveVisible(frame.board,available)
                 handler.post {
                     preparing = false
                     if (stopped) return@post
                     previewButton?.isEnabled = true
                     if (!plan.complete || plan.moves.isEmpty()) {
-                        setStatus("No safe complete three-piece plan. No move available.")
+                        setStatus("No complete plan for the remaining visible pieces. No move available.")
                         return@post
                     }
                     if (latest?.signature != frame.signature ||
@@ -256,14 +257,14 @@ class CaptureService : Service() {
                         return@post
                     }
                     val move = plan.moves.first()
-                    val piece = pieces[move.pieceIndex]
+                    val piece = available.first { it.first == move.pieceIndex }.second
                     prepared = Prepared(frame,move,piece,frame.pieces[move.pieceIndex]!!,
                         Solver.placeAndClear(frame.board,piece,move.row,move.col),
                         SystemClock.elapsedRealtime())
                     updateMarker()
                     moveButton?.isEnabled = true
                     setStatus("PREVIEW only: piece ${move.pieceIndex+1}, row ${move.row+1}, col ${move.col+1}. " +
-                        "Green = planned cells; red = touch endpoint. Adjust X/Y or press MOVE 1 once.")
+                        "Green = planned cells; red = touch endpoint. Adjust X/Y or press NEXT MOVE.")
                 }
             } catch (e: Exception) {
                 handler.post {
@@ -276,10 +277,10 @@ class CaptureService : Service() {
     }
 
     private fun attemptOneMove() {
-        if (inProgress || moveAttempted) return
+        if (inProgress || sessionBlocked) return
         val plan = prepared ?: run { setStatus("Tap PREVIEW first."); return }
         if (TouchService.current == null) {
-            setStatus("Enable the accessibility service before MOVE 1."); return
+            setStatus("Enable the accessibility service before NEXT MOVE."); return
         }
         if (SystemClock.elapsedRealtime()-plan.time > 30000L) {
             prepared = null; moveButton?.isEnabled = false; removeMarker()
@@ -293,7 +294,6 @@ class CaptureService : Service() {
             setStatus("Drag would leave the screen. Adjust X/Y first."); return
         }
         inProgress = true
-        moveAttempted = true
         moveButton?.isEnabled = false
         previewButton?.isEnabled = false
         removeMarker()
@@ -305,27 +305,47 @@ class CaptureService : Service() {
             handler.post {
                 if (stopped) return@post
                 lastGestureOutcome = detail
-                if (!success) { finish("Gesture failed: $detail. No further moves."); return@post }
-                handler.postDelayed({
-                    if (stopped) return@postDelayed
+                if (!success) {
+                    sessionBlocked = true
+                    finish("Android gesture failed: $detail. STOP and inspect game.")
+                    return@post
+                }
+                // Wait for game animation and 2 stable captures after release.
+                val verificationStarted = SystemClock.elapsedRealtime()
+                fun verify() {
+                    if (stopped) return
                     val actual = latest
-                    val verified = actual != null &&
-                        SystemClock.elapsedRealtime()-latestAt < 3000L && actual.board == plan.expected
-                    finish(if (verified) "Board matched predicted placement. Stop and inspect the game." else
-                        "Gesture completed but board did NOT match. Stop and inspect; no retry.")
-                },1700)
+                    val recent = SystemClock.elapsedRealtime() - latestAt < 2000L
+                    val pieceRemoved = actual?.pieces?.get(plan.move.pieceIndex) == null
+                    val lastPiece = plan.frame.recognized == 1
+                    val boardMatched = actual?.board == plan.expected
+                    if (recent && stableCount >= 2 && boardMatched && (pieceRemoved || lastPiece)) {
+                        moveCount++
+                        finish("VERIFIED: Move $moveCount placed successfully. " +
+                            "Tap PREVIEW for the next piece (manual confirmation required).")
+                        return
+                    }
+                    if (SystemClock.elapsedRealtime() - verificationStarted > 4800L) {
+                        sessionBlocked = true
+                        finish("UNVERIFIED: board or piece slot did not match prediction. " +
+                            "STOP and inspect game. No further moves this session.")
+                    } else handler.postDelayed({ verify() }, 400L)
+                }
+                handler.postDelayed({ verify() }, 900L)
             }
         } ?: false
         if (!accepted) {
             lastGestureOutcome = "Android rejected gesture dispatch"
+            sessionBlocked = true
             finish("Accessibility service rejected gesture. No move made.")
         }
     }
 
     private fun finish(message: String) {
         inProgress=false
-        // Deliberately keep MOVE 1 disabled after the first attempt. No retries.
+        // Every move requires a fresh preview and explicit NEXT MOVE tap.
         moveButton?.isEnabled=false
+        previewButton?.isEnabled = !sessionBlocked
         setStatus(message)
     }
     override fun onDestroy() {
@@ -340,7 +360,7 @@ class CaptureService : Service() {
         projection?.stop(); projection=null
         worker.shutdownNow()
         // Preserve the last Android gesture outcome when capture is stopped.
-        setStatus("Stopped. Last gesture result preserved below. No automatic moves will occur.")
+        setStatus("Stopped. Last gesture result preserved. No automatic moves will occur.")
         super.onDestroy()
     }
 }
