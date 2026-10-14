@@ -37,11 +37,12 @@ class CaptureService : Service() {
     private var moveButton: Button? = null
     private var previewButton: Button? = null
     private var offsetLabel: TextView? = null
+    private var shapeLabel: TextView? = null
     private var marker: CalibrationOverlay? = null
     private var prepared: Prepared? = null
     private var preparing = false
     private var xOffset = 0
-    private var yOffset = 0
+    private var yOffset = 400
     private data class Prepared(
         val frame: BoardRecognizer.Frame,
         val move: Move,
@@ -88,7 +89,7 @@ class CaptureService : Service() {
         startForeground(22,notification,ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
         val prefs = getSharedPreferences("calibration", MODE_PRIVATE)
         xOffset = prefs.getInt("x", 0)
-        yOffset = prefs.getInt("y", 0)
+        yOffset = prefs.getInt("y", 400)
         val data = if (Build.VERSION.SDK_INT >= 33) intent.getParcelableExtra("data",Intent::class.java)
                    else @Suppress("DEPRECATION") (intent.getParcelableExtra("data") as? Intent)
         if (data == null) { setStatus("Missing screen-capture permission."); stopSelf(); return START_NOT_STICKY }
@@ -158,6 +159,12 @@ class CaptureService : Service() {
         panel.addView(adjustments)
         offsetLabel = TextView(this).apply { setTextColor(0xFFFFFFFF.toInt()); textSize = 13f }
         panel.addView(offsetLabel)
+        shapeLabel = TextView(this).apply {
+            setTextColor(0xFFFFFFFF.toInt())
+            textSize = 14f
+            text = "Tap PREVIEW to inspect the detected shape."
+        }
+        panel.addView(shapeLabel)
         updateOffsetLabel()
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
@@ -193,16 +200,21 @@ class CaptureService : Service() {
         val screen = screenSize()
         val sx = screen.x / BoardRecognizer.REF_WIDTH
         val sy = screen.y / BoardRecognizer.REF_HEIGHT
-        val fromX = plan.observed.centerX * sx
-        val fromY = plan.observed.centerY * sy
-        val toX = (163f + plan.move.col*55f + (plan.piece.width-1)*27.5f) * sx + xOffset
-        // No assumed 95px lift: use a measured adjustment in SCREEN pixels.
-        val toY = (454f + plan.move.row*55f + (plan.piece.height-1)*27.5f) * sy + yOffset
+        // Use the same occupied tile for pickup and placement. Previously the
+        // drag began at the piece bounding-box center, which can land on the
+        // right-hand block of an irregular piece and shift its placement.
+        val fromX = plan.observed.gripX * sx
+        val fromY = plan.observed.gripY * sy
+        val toX = (163f + (plan.move.col + plan.observed.gripCol)*55f) * sx + xOffset
+        // The +400px vertical finger offset is the measured on-device default.
+        val toY = (454f + (plan.move.row + plan.observed.gripRow)*55f) * sy + yOffset
         return floatArrayOf(fromX,fromY,toX,toY)
     }
 
     private fun updateMarker() {
         val plan = prepared ?: return
+        shapeLabel?.text = "Piece ${plan.move.pieceIndex+1}: ${plan.observed.signature} " +
+            "(${plan.observed.count} blocks); grip: bottom-left. Check shape!"
         val screen = screenSize()
         val coords = gestureCoords(plan)
         if (marker == null) {
@@ -264,7 +276,8 @@ class CaptureService : Service() {
                     updateMarker()
                     moveButton?.isEnabled = true
                     setStatus("PREVIEW only: piece ${move.pieceIndex+1}, row ${move.row+1}, col ${move.col+1}. " +
-                        "Green = planned cells; red = touch endpoint. Adjust X/Y or press NEXT MOVE.")
+                        "${piece.normalized.size} green cells = full detected shape; blue = bottom-left occupied pickup tile; red = release. " +
+                        "If count/shape differs from the real piece, STOP. Calibration X=$xOffset Y=$yOffset.")
                 }
             } catch (e: Exception) {
                 handler.post {
@@ -282,6 +295,12 @@ class CaptureService : Service() {
         if (TouchService.current == null) {
             setStatus("Enable the accessibility service before NEXT MOVE."); return
         }
+        // Refuse stale previews and mismatched shapes rather than making a blind move.
+        if (plan.piece.normalized.size != plan.observed.count) {
+            sessionBlocked = true
+            finish("Piece shape count mismatch. STOP; no move made.")
+            return
+        }
         if (SystemClock.elapsedRealtime()-plan.time > 30000L) {
             prepared = null; moveButton?.isEnabled = false; removeMarker()
             setStatus("Preview expired after 30 seconds. Tap PREVIEW again.")
@@ -298,6 +317,7 @@ class CaptureService : Service() {
         previewButton?.isEnabled = false
         removeMarker()
         prepared = null
+        shapeLabel?.text = "Moving one piece. Wait for verification."
         lastGestureOutcome = "Waiting for Android gesture result"
         setStatus("Testing piece ${plan.move.pieceIndex+1} at row ${plan.move.row+1}, " +
             "col ${plan.move.col+1}; endpoint (${coords[2].toInt()}, ${coords[3].toInt()}).")
@@ -327,8 +347,10 @@ class CaptureService : Service() {
                     }
                     if (SystemClock.elapsedRealtime() - verificationStarted > 4800L) {
                         sessionBlocked = true
-                        finish("UNVERIFIED: board or piece slot did not match prediction. " +
-                            "STOP and inspect game. No further moves this session.")
+                        val diagnosis = actual?.let { displacementReport(plan, it.board) }
+                            ?: "No fresh game frame available."
+                        finish("UNVERIFIED: $diagnosis STOP and inspect game. " +
+                            "No further moves this session.")
                     } else handler.postDelayed({ verify() }, 400L)
                 }
                 handler.postDelayed({ verify() }, 900L)
@@ -339,6 +361,43 @@ class CaptureService : Service() {
             sessionBlocked = true
             finish("Accessibility service rejected gesture. No move made.")
         }
+    }
+
+    /** Diagnose a pure translation after an unverified placement (no line clears).
+     *  Never silently change calibration or perform a retry.
+     */
+    private fun displacementReport(plan: Prepared, actual: Long): String {
+        val original = plan.frame.board
+        val predicted = plan.expected
+        val expectedAdded = predicted and original.inv()
+        val actualAdded = actual and original.inv()
+        val n = plan.piece.normalized.size
+        val expectedCount = java.lang.Long.bitCount(expectedAdded)
+        val actualCount = java.lang.Long.bitCount(actualAdded)
+        if (expectedCount != n || (original and predicted) != original) {
+            return "Predicted placement includes a line clear; inspect board manually."
+        }
+        if (actualCount != n || (original and actual) != original) {
+            return "Detected $actualCount new cells but expected $n. Shape or board mismatch."
+        }
+        for (dy in -3..3) for (dx in -3..3) {
+            var shifted = 0L
+            var valid = true
+            for (r in 0..7) for (c in 0..7) {
+                if ((expectedAdded and (1L shl (r*8+c))) == 0L) continue
+                val rr = r + dy; val cc = c + dx
+                if (rr !in 0..7 || cc !in 0..7) { valid = false; break }
+                shifted = shifted or (1L shl (rr*8+cc))
+            }
+            if (valid && shifted == actualAdded && (dx != 0 || dy != 0)) {
+                val screen = screenSize()
+                val suggestedX = (xOffset - dx * 55f * screen.x / BoardRecognizer.REF_WIDTH).toInt()
+                val suggestedY = (yOffset - dy * 55f * screen.y / BoardRecognizer.REF_HEIGHT).toInt()
+                return "Piece landed ${dx} columns, ${dy} rows from preview. " +
+                    "Suggested next-test offsets: X=$suggestedX, Y=$suggestedY (not applied)."
+            }
+        }
+        return "New cells differ from preview and are not a simple translation."
     }
 
     private fun finish(message: String) {
@@ -352,7 +411,7 @@ class CaptureService : Service() {
         stopped=true
         removeMarker()
         try { overlay?.let { wm?.removeView(it) } } catch (_: Exception) {}
-        overlay=null; moveButton=null; previewButton=null; offsetLabel=null; prepared=null
+        overlay=null; moveButton=null; previewButton=null; offsetLabel=null; shapeLabel=null; prepared=null
         reader?.setOnImageAvailableListener(null,null)
         display?.release(); display=null
         reader?.close(); reader=null

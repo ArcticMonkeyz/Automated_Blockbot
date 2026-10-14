@@ -32,8 +32,8 @@ class MainActivity : Activity() {
         fun button(value: String, fn: () -> Unit) {
             layout.addView(Button(this).apply { text=value; setOnClickListener { fn() } })
         }
-        label("Rock Block Bot v2.5 — guided multi-move test",22f)
-        label("1. Allow floating controls and enable Rock Block Bot accessibility service. 2. Start capture; choose ENTIRE SCREEN for this first drag test. 3. Switch to Rock Block Saga with all three pieces visible. 4. Tap PREVIEW to see the planned cells and finger endpoint. Use X/Y adjustments in 20px steps. 5. Tap NEXT MOVE only when ready. After a verified placement, tap PREVIEW again to plan the next remaining piece. No unattended play.")
+        label("Rock Block Bot v2.6 — guided multi-move test",22f)
+        label("1. Allow floating controls and enable Rock Block Bot accessibility service. 2. Start capture; choose ENTIRE SCREEN for this first drag test. 3. Switch to Rock Block Saga with all three pieces visible. 4. Tap PREVIEW to see the planned cells and finger endpoint. The default is X=0, Y=+400. Use X/Y adjustments in 20px steps. Preview shows every detected cell and a bottom-left grip marker; do not press NEXT MOVE if the shape is wrong. 5. Tap NEXT MOVE only when ready. After a verified placement, tap PREVIEW again to plan the next remaining piece. No unattended play.")
         button("Allow floating controls") {
             startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,Uri.parse("package:$packageName")))
         }

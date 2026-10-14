@@ -1,8 +1,7 @@
-1. Extract this ZIP on your PC.
-2. Open GitHub Desktop > Repository > Show in Explorer for ArcticMonkeyz/Automated_Blockbot.
-3. Copy EVERYTHING INSIDE the extracted RockBlockBot-v2.5 folder into the cloned repository root.
-4. Choose Replace files; do NOT delete .git or .github in the existing repository.
-5. In GitHub Desktop, commit with summary: Blockbot v2.5 guided multi-move solver
-6. Push origin. GitHub Actions builds app-debug.apk and packages it as an artifact ZIP.
-7. Install the new APK on your Pixel 7 Pro. If Android reports an update signature conflict, ask for guidance before uninstalling because app settings may be lost.
-8. In game: PREVIEW > NEXT MOVE > wait for VERIFIED > PREVIEW again. STOP if UNVERIFIED.
+1. Extract this ZIP.
+2. In GitHub Desktop open Repository > Show in Explorer.
+3. Copy the contents of this folder into the repository root, preserving .git and .github.
+4. Replace existing files and commit: Fix piece recognition and touch anchor v2.6
+5. Push origin, then check Actions for the new debug APK.
+6. On phone: PREVIEW first. Confirm piece count and shape before NEXT MOVE.
+7. If UNVERIFIED, STOP. Share game and report screenshots.
