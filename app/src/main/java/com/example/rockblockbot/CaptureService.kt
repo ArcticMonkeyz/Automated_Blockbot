@@ -95,6 +95,13 @@ class CaptureService : Service() {
     private var probeStartedAt = 0L
     private val probeSamples = ArrayList<ShadowTracker.Match>()
     private var probeSampleWindow = ProbeTiming.Window(0L, 0L)
+    // Purple four-strip only: two different dwell positions within one stroke.
+    @Volatile private var dualProbeWindows: DualProbe.Windows? = null
+    private var dualProbeAnchor: Pair<Int,Int>? = null
+    private var dualProbeEndpoint: Pair<Float,Float>? = null
+    private val probeSamplesA = ArrayList<ShadowTracker.Match>()
+    private val probeSamplesB = ArrayList<ShadowTracker.Match>()
+    @Volatile private var diagnosticCapturedB = false
     private var probeObserved = 0
     private var probeRejected = 0
     @Volatile private var diagnosticCaptured = false
@@ -110,6 +117,15 @@ class CaptureService : Service() {
         return LearnedGrip(prefs.getFloat("${key}_x", 0f), prefs.getFloat("${key}_y", 0f))
     }
     private fun calibratedCoords(plan: Prepared): FloatArray? {
+        // Invalidate older single-position measurements for this specific
+        // occlusion-prone shape; all other shape calibrations remain untouched.
+        val shape = ShadowTracker.Target(plan.frame.board,plan.piece.normalized,
+            plan.move.row,plan.move.col,plan.observed.tileColor)
+        if (OccludedPurpleShadow.supported(shape)) {
+            val key=PieceCalibration.key(plan.observed.signature,plan.observed.tileColor)
+            if (!getSharedPreferences("shadow_probe_v442",MODE_PRIVATE)
+                    .getBoolean("${key}_dual_valid",false)) return null
+        }
         val map = learnedGrip(plan.observed) ?: return null
         val screen = screenSize()
         val (x, y) = GripMapping.releaseFor(plan.move.col,plan.move.row,
@@ -216,44 +232,72 @@ class CaptureService : Service() {
                         val cropped=Bitmap.createBitmap(bmp,0,0,w,h)
                         try {
                             if (track != null) {
-                                val scan = ShadowTracker.inspect(w,h,{ x,y -> cropped.getPixel(x,y) },track)
-                                // Preserve the proven local search. Only if it fails, inspect
-                                // the whole board for a strongly supported displaced shadow.
-                                // The strict fallback is never a blind placement command.
-                                val global = if (scan.match == null && track.probeRow != null && track.probeCol != null)
+                                val elapsed = now - probeStartedAt
+                                val dual = dualProbeWindows
+                                val phase = if (probePlan != null && dual != null) {
+                                    when {
+                                        dual.first.includes(elapsed) -> 1
+                                        dual.second.includes(elapsed) -> 2
+                                        else -> 0
+                                    }
+                                } else if (probePlan != null &&
+                                    probeSampleWindow.includes(elapsed)) 1 else 0
+                                val effective = if (phase==2 && dualProbeAnchor!=null)
+                                    track.copy(probeRow=dualProbeAnchor!!.first,
+                                        probeCol=dualProbeAnchor!!.second) else track
+                                val scan = ShadowTracker.inspect(w,h,
+                                    { x,y -> cropped.getPixel(x,y) },effective)
+                                // Preserve proven conservative recognition. Only rescue
+                                // the purple four-strip when a solid lifted block hides
+                                // three cells and a distinct translucent end survives.
+                                val global = if (scan.match == null &&
+                                    effective.probeRow != null && effective.probeCol != null)
                                     ShadowTracker.inspect(w,h,{ x,y -> cropped.getPixel(x,y) },
-                                        track.copy(probeRow=null, probeCol=null)) else null
+                                        effective.copy(probeRow=null, probeCol=null)) else null
                                 val distant = global?.match?.takeIf { m ->
-                                    kotlin.math.abs(m.row-track.probeRow!!) <= 4 &&
-                                    kotlin.math.abs(m.col-track.probeCol!!) <= 4 &&
+                                    kotlin.math.abs(m.row-effective.probeRow!!) <= 4 &&
+                                    kotlin.math.abs(m.col-effective.probeCol!!) <= 4 &&
                                     m.strength >= .85 && m.confidence >= .18 &&
-                                    m.litCells == track.cells.size
+                                    m.litCells == effective.cells.size
                                 }?.copy(fallback=true)
-                                val accepted = scan.match ?: distant
-                                val diagnostic = if (accepted?.fallback == true)
+                                val occluded = if (dual!=null && phase!=0 &&
+                                    scan.match==null && distant==null)
+                                    OccludedPurpleShadow.inspect(w,h,
+                                        { x,y -> cropped.getPixel(x,y) },effective) else null
+                                val accepted = scan.match ?: distant ?: occluded?.match
+                                val diagnostic = if (accepted != null && occluded?.match === accepted)
+                                    "OCCLUDED (PROVISIONAL): ${occluded.diagnostic}; local: ${scan.diagnostic}"
+                                else if (accepted?.fallback == true)
                                     "STRICT GLOBAL FALLBACK: ${global?.diagnostic}; local: ${scan.diagnostic}"
                                 else if (scan.match == null && global != null)
-                                    "LOCAL REJECTED: ${scan.diagnostic}; global diagnostic only: ${global.diagnostic}"
+                                    "LOCAL REJECTED: ${scan.diagnostic}; global: ${global.diagnostic}" +
+                                        (occluded?.let { "; composite: ${it.diagnostic}" } ?: "")
                                 else scan.diagnostic
-                                // Save one EXACT analysis frame, not a later UI screenshot.
-                                // Debug builds can retrieve it with adb run-as (private app storage).
-                                val elapsed = now - probeStartedAt
-                                if (probePlan != null && !diagnosticCaptured &&
-                                    probeSampleWindow.includes(elapsed)) {
-                                    diagnosticCaptured = true
+                                // Retain the original export and capture a second distinct
+                                // position for testing the required one-cell shadow shift.
+                                val firstFrame = phase==1 && !diagnosticCaptured
+                                val secondFrame = phase==2 && !diagnosticCapturedB
+                                if (firstFrame || secondFrame) {
+                                    if(firstFrame) diagnosticCaptured=true
+                                    if(secondFrame) diagnosticCapturedB=true
                                     try {
                                         val folder = File(filesDir, "calibration_diagnostics")
                                         folder.mkdirs()
-                                        val png = File(folder, "latest_probe.png")
+                                        val suffix = if (secondFrame) "_b" else ""
+                                        val png = File(folder, "latest_probe${suffix}.png")
                                         FileOutputStream(png).use { out ->
                                             cropped.compress(Bitmap.CompressFormat.PNG, 100, out)
                                         }
-                                        val note = "elapsedMs=$elapsed\nprobe=${track.probeRow},${track.probeCol}\n" +
+                                        val note = "elapsedMs=$elapsed phase=$phase\n" +
+                                            "probe=${effective.probeRow},${effective.probeCol}\n" +
                                             "target=${track.row},${track.col} color=${track.color}\n" +
                                             "local=${scan.diagnostic}\nglobal=${global?.diagnostic}\n" +
+                                            "occluded=${occluded?.diagnostic}\n" +
                                             "accepted=${accepted?.row},${accepted?.col}\n"
-                                        File(folder,"latest_probe.txt").writeText(note)
-                                        diagnosticFrameNote = "Saved private diagnostic: calibration_diagnostics/latest_probe.png and latest_probe.txt"
+                                        File(folder,"latest_probe${suffix}.txt").writeText(note)
+                                        diagnosticFrameNote = if (secondFrame)
+                                            "Saved both distinct probe frames for export" else
+                                            "Saved first probe frame for export"
                                     } catch (e: Exception) {
                                         diagnosticFrameNote = "Diagnostic save failed: ${e.javaClass.simpleName}: ${e.message}"
                                     }
@@ -264,10 +308,12 @@ class CaptureService : Service() {
                                     shadowDiagnostic=diagnostic
                                     shadowSampleAt=now
                                     shadowFrames++
-                                    if (probePlan != null &&
-                                        probeSampleWindow.includes(now - probeStartedAt)) {
+                                    if (probePlan != null && phase!=0) {
                                         if (accepted != null) {
-                                            probeSamples.add(accepted)
+                                            if (dual!=null) {
+                                                if(phase==1)probeSamplesA.add(accepted)
+                                                else probeSamplesB.add(accepted)
+                                            } else probeSamples.add(accepted)
                                             probeObserved++
                                         } else probeRejected++
                                     }
@@ -754,6 +800,22 @@ class CaptureService : Service() {
         return options.maxByOrNull { it.third }?.let { it.first to it.second }
     }
 
+    /** Second safe anchor, a single cell from the first. Prefer horizontal
+     * movement for the four-wide strip; avoid occupied or clipped destinations. */
+    private fun alternateProbeAnchor(plan:Prepared, first:Pair<Int,Int>):Pair<Int,Int>? {
+        val options=listOf(0 to 1,0 to -1,1 to 0,-1 to 0)
+        val occupied=plan.frame.board
+        for ((dr,dc) in options) {
+            val nr=first.first+dr;val nc=first.second+dc
+            if(plan.piece.normalized.all { cell ->
+                val r=nr+cell.r;val c=nc+cell.c
+                r in 0..7 && c in 0..7 &&
+                    (occupied and (1L shl (r*8+c)))==0L
+            }) return nr to nc
+        }
+        return null
+    }
+
     private fun calibrateSingleStroke() {
         if (inProgress || sessionBlocked) return
         val plan=prepared ?: run { setStatus("Press PREVIEW before CAL DRAG."); return }
@@ -774,17 +836,44 @@ class CaptureService : Service() {
         // so this does not alter the final green-preview destination.
         coords[2] += (probeAnchor.second-plan.move.col)*ShadowTracker.pitchX(screen.x)
         coords[3] += (probeAnchor.first-plan.move.row)*ShadowTracker.pitchY(screen.y)
-        if(coords.any { it !in 12f..(screen.y-12f) } || coords[0]>=screen.x-12 || coords[2]>=screen.x-12) {
+        val baseTarget=ShadowTracker.Target(plan.frame.board,plan.piece.normalized,
+            plan.move.row,plan.move.col,plan.observed.tileColor,
+            probeAnchor.first,probeAnchor.second)
+        val possibleSecond=if (OccludedPurpleShadow.supported(baseTarget))
+            alternateProbeAnchor(plan,probeAnchor) else null
+        if (OccludedPurpleShadow.supported(baseTarget) && possibleSecond==null) {
+            setStatus("CAL DRAG blocked: this purple four-strip needs two safe probe positions. " +
+                "Move manually or wait for a safer board; do not guess calibration.")
+            return
+        }
+        val secondCoords=possibleSecond?.let {
+            Pair(coords[2]+(it.second-probeAnchor.second)*ShadowTracker.pitchX(screen.x),
+                coords[3]+(it.first-probeAnchor.first)*ShadowTracker.pitchY(screen.y))
+        }
+        if(coords.any { it !in 12f..(screen.y-12f) } || coords[0]>=screen.x-12 ||
+            coords[2]>=screen.x-12 ||
+            (secondCoords!=null && (secondCoords.first !in 12f..(screen.x-12f) ||
+                secondCoords.second !in 12f..(screen.y-12f)))) {
             setStatus("Calibration BLOCKED: invalid finger coordinates."); return
         }
         probePlan=plan
         probeSamples.clear()
+        probeSamplesA.clear();probeSamplesB.clear()
+        dualProbeAnchor=possibleSecond
+        dualProbeEndpoint=secondCoords
+        dualProbeWindows=if (possibleSecond!=null && secondCoords!=null)
+            DualProbe.windows(coords[0],coords[1],coords[2],coords[3],
+                secondCoords.first,secondCoords.second) else null
+        // Never reuse a second-phase screenshot from an older calibration.
+        for (name in listOf("latest_probe.png","latest_probe.txt",
+            "latest_probe_b.png","latest_probe_b.txt"))
+            File(filesDir,"calibration_diagnostics/$name").delete()
         probeObserved=0
         probeRejected=0
-        diagnosticCaptured=false
+        diagnosticCaptured=false;diagnosticCapturedB=false
         diagnosticFrameNote="Waiting for probe dwell frame"
         probeStartedAt=SystemClock.elapsedRealtime()
-        probeSampleWindow=ProbeTiming.observationWindow(
+        probeSampleWindow=dualProbeWindows?.first ?: ProbeTiming.observationWindow(
             coords[0],coords[1],coords[2],coords[3])
         inProgress=true
         closeFloatingDetailsForDrag()
@@ -795,58 +884,73 @@ class CaptureService : Service() {
         probeButton?.isEnabled=false
         previewButton?.isEnabled=false
         shadowSample=null;shadowFrames=0;shadowSampleAt=0L
-        shadowTarget=ShadowTracker.Target(plan.frame.board, plan.piece.normalized,
-            plan.move.row, plan.move.col, plan.observed.tileColor,
-            probeAnchor.first, probeAnchor.second)
+        shadowTarget=baseTarget
         lastTouchPath="CAL DRAG for ${plan.observed.tileColor} ${plan.observed.signature}: " +
             "planned preview top-left r${plan.move.row+1} c${plan.move.col+1}; " +
             "safe probe r${probeAnchor.first+1} c${probeAnchor.second+1}; " +
             "pickup (${coords[0].toInt()},${coords[1].toInt()}) -> " +
             "interior board approach (${coords[2].toInt()},${coords[3].toInt()}) " +
+            (if(secondCoords!=null) "-> second probe (${secondCoords.first.toInt()},${secondCoords.second.toInt()}) " else "") +
             "-> back to tray (ONE stroke)."
-        lastShadowTracking="Calibrating: sampling the game's colored shadow at " +
-            "${probeSampleWindow.fromMs}-${probeSampleWindow.toMs} ms while " +
-            "the piece dwells over the board (not during travel/return)."
+        lastShadowTracking="Calibrating: observing " +
+            "${probeSampleWindow.fromMs}-${probeSampleWindow.toMs} ms" +
+            (dualProbeWindows?.let { " AND ${it.second.fromMs}-${it.second.toMs} ms (independent second position)" }
+                ?: "") + "; never sampling while travelling."
         lastPlacementCheck="PENDING: Return-to-tray calibration probe; no placement requested."
         shapeLabel?.text="CAL DRAG: checking preview-derived approach, then returning to tray. Do not touch."
         setStatus("Calibration trial: one uninterrupted drag out and back, then board check.")
-        val accepted=touch.probeWithReturn(coords[0],coords[1],coords[2],coords[3]) {ok,msg ->
+        val callback: (Boolean,String)->Unit = {ok,msg ->
             handler.post { if(!stopped && probePlan===plan) finishProbe(plan,coords,ok,msg) }
         }
+        val accepted=if (secondCoords!=null)
+            touch.probeWithTwoStops(coords[0],coords[1],coords[2],coords[3],
+                secondCoords.first,secondCoords.second,callback)
+            else touch.probeWithReturn(coords[0],coords[1],coords[2],coords[3],callback)
         if(!accepted)finishProbe(plan,coords,false,"Android rejected single-stroke probe")
     }
 
     private fun finishProbe(plan:Prepared, coords:FloatArray, gestureOk:Boolean, gestureResult:String) {
         if(probePlan!==plan || stopped)return
+        val shadowTargetProbeRow=shadowTarget?.probeRow
+        val shadowTargetProbeCol=shadowTarget?.probeCol
         probePlan=null
         shadowTarget=null
         lastGestureOutcome=gestureResult
         // Do not infer accuracy from just one image. Two matching independently
         // captured frames are required, and neither can be a moving-piece mask.
+        val windows=dualProbeWindows
+        val dual=windows!=null && dualProbeAnchor!=null
+        val secondary=dualProbeAnchor
+        val verdict=if (dual && secondary!=null)
+            DualProbe.validate(probeSamplesA,probeSamplesB,
+                secondary.first - (shadowTargetProbeRow ?: secondary.first),
+                secondary.second - (shadowTargetProbeCol ?: secondary.second)) else null
         val readings=probeSamples.groupBy { it.row to it.col }
             .toList().sortedByDescending { (_, values) -> values.size }
         val best=readings.firstOrNull()
         val second=readings.getOrNull(1)?.second?.size ?: 0
-        val observed=best?.second?.size ?: 0
-        val sample=best?.second?.maxByOrNull {it.strength + it.confidence}
-        val confident=gestureOk && observed >= (if(sample?.fallback==true) 3 else 2) &&
+        val observed=if (dual)probeSamplesA.size+probeSamplesB.size
+                     else best?.second?.size ?: 0
+        val sample=if(dual)verdict?.first else
+            best?.second?.maxByOrNull {it.strength + it.confidence}
+        val confident=gestureOk && (if(dual) verdict?.accepted==true else
+            observed >= (if(sample?.fallback==true) 3 else 2) &&
             observed > second && sample != null &&
-            // Do not combine inconsistent local and global measurements.
-            best?.second?.all { it.fallback == sample.fallback } == true
+            best?.second?.all { it.fallback == sample.fallback } == true)
         lastShadowTracking=if(sample!=null)
             "Probe shadow ${sample.colorlessPosition()}, target row ${plan.move.row+1} " +
             "col ${plan.move.col+1} (delta ${sample.col-plan.move.col} columns, " +
-            "${sample.row-plan.move.row} rows) in $observed frames; " +
-            "other position samples=$second; strength ${"%.2f".format(Locale.US,sample.strength)}; " +
-            "$probeObserved candidate and $probeRejected rejected frames during dwell; " +
-            "strict global fallback=${sample.fallback}. $diagnosticFrameNote. " +
+            "${sample.row-plan.move.row} rows); " +
+            (if(dual) "dual-position: ${verdict?.reason}; " else "$observed agreeing frames; ") +
+            "$probeObserved candidate and $probeRejected rejected frames; " +
+            "fallback=${sample.fallback}. $diagnosticFrameNote. " +
             "Fingerprint ${plan.observed.tileColor} ${plan.observed.signature}."
-        else "No agreeing shadow during the board-entry dwell: " +
-            "$probeObserved candidate frame(s), $probeRejected rejected; " +
-            "sampling ${probeSampleWindow.fromMs}-${probeSampleWindow.toMs} ms. " +
-            "$shadowDiagnostic; $diagnosticFrameNote; planned target r${plan.move.row+1} c${plan.move.col+1} " +
-            "(safe-probe position recorded in Last touch path)."
-        probeSamples.clear()
+        else "No agreeing shadow: $probeObserved accepted-frame candidate(s), " +
+            "$probeRejected rejected; " +
+            (if(dual) "two-position result ${verdict?.reason}; " else "") +
+            "$shadowDiagnostic; $diagnosticFrameNote."
+        probeSamples.clear();probeSamplesA.clear();probeSamplesB.clear()
+        dualProbeWindows=null; dualProbeAnchor=null;dualProbeEndpoint=null
         // Resume ordinary recognition after the finger has returned toward tray.
         val waitingSince=SystemClock.elapsedRealtime()
         fun settle() {
@@ -867,8 +971,10 @@ class CaptureService : Service() {
                     getSharedPreferences("shadow_probe_v442",MODE_PRIVATE).edit()
                         .putFloat("${key}_x",offsetX).putFloat("${key}_y",offsetY)
                         .putInt("${key}_w",screen.x).putInt("${key}_h",screen.y)
-                        .putBoolean("${key}_valid",true).apply()
+                        .putBoolean("${key}_valid",true)
+                        .putBoolean("${key}_dual_valid",dual).apply()
                     lastPlacementCheck="CALIBRATED: The piece returned to the tray; " +
+                        (if(dual) "two distinct probe positions agreed; " else "") +
                         "game shadow matched $observed frames at row ${sample.row+1}, " +
                         "col ${sample.col+1}. Learned finger-to-shadow offset " +
                         "X=${offsetX.toInt()} Y=${offsetY.toInt()} px. " +

@@ -138,6 +138,30 @@ class TouchService : AccessibilityService() {
             "Probe completed; returned toward tray", callback)
     }
 
+    /** Two board dwell locations separated by exactly one grid cell, all in
+     * ONE gesture. This allows the occluded-preview detector to distinguish a
+     * stationary existing block from the game's moving placement shadow.
+     * The gesture ends in the original tray, never on the board intentionally.
+     */
+    fun probeWithTwoStops(fromX:Float,fromY:Float,ax:Float,ay:Float,
+                          bx:Float,by:Float,callback:(Boolean,String)->Unit):Boolean {
+        if(busy || held)return false
+        val path=Path().apply {
+            moveTo(fromX,fromY)
+            lineTo(ax,ay)
+            for(k in 0 until DualProbe.SWEEPS_PER_STOP)
+                lineTo(ax + if(k%2==0) DualProbe.SWEEP_PX else -DualProbe.SWEEP_PX,ay)
+            lineTo(ax,ay)
+            lineTo(bx,by)
+            for(k in 0 until DualProbe.SWEEPS_PER_STOP)
+                lineTo(bx + if(k%2==0) DualProbe.SWEEP_PX else -DualProbe.SWEEP_PX,by)
+            lineTo(bx,by)
+            lineTo(fromX,fromY)
+        }
+        return dispatchSingle(path,DualProbe.DURATION_MS,
+            "Two-stop probe completed; returned toward tray",callback)
+    }
+
     /** ONE unbroken Android stroke, with a small final dwell before natural
      * ACTION_UP. Unlike the experimental held mode, no follow-up gesture can
      * accidentally cancel the finger on segment 2.

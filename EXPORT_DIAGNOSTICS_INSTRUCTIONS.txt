@@ -1,10 +1,8 @@
-v4.4.9: Save calibration diagnostic PNG and TXT to your phone.
+RockBlockBot v4.4.10 — EXPORT DIAGNOSTICS
 
-1. Install the updated APK over your current installation (do not uninstall or clear data).
-2. Open Rock Block Bot and tap EXPORT DIAGNOSTICS (save ZIP to phone).
-3. In the Android save dialog, choose Downloads and tap Save.
-4. Open Files > Downloads, find RockBlockBot-diagnostics.zip and share/upload it.
-
-The ZIP contains latest_probe.png and latest_probe.txt.
-If no files are available, run PREVIEW > CAL DRAG > STOP once and try export again.
-No changes were made to movement or recognition.
+Open app -> EXPORT DIAGNOSTICS (save ZIP to phone) -> Downloads -> Save.
+Upload the resulting ZIP to the chat.
+The saved first and second probe screenshots and text records refer to their
+corresponding visual analysis frames. Purple four-strip trials must confirm
+one-cell ghost movement across two positions before they can learn calibration.
+Never NEXT MOVE after NO CALIBRATION / UNVERIFIED.

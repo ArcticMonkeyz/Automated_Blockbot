@@ -43,7 +43,8 @@ class MainActivity : Activity() {
             val output = contentResolver.openOutputStream(uri) ?: throw IllegalStateException("Unable to open selected file")
             output.use { stream ->
                 ZipOutputStream(stream).use { zip ->
-                    for (file in listOf(png, txt)) {
+                    for (file in listOf(png, txt,
+                        File(folder,"latest_probe_b.png"),File(folder,"latest_probe_b.txt")).filter { it.isFile }) {
                         zip.putNextEntry(ZipEntry(file.name))
                         file.inputStream().use { it.copyTo(zip) }
                         zip.closeEntry()
@@ -75,16 +76,19 @@ class MainActivity : Activity() {
         fun button(value: String, fn: () -> Unit) {
             layout.addView(Button(this).apply { text=value; setOnClickListener { fn() } })
         }
-        label("Rock Block Bot v4.4.9 — export diagnostics",22f)
+        label("Rock Block Bot v4.4.10 — occlusion-aware dual probe",22f)
         label("1. Enable overlay/accessibility and SHARE A SINGLE APP: Rock Block Saga. " +
             "2. PREVIEW only when all real pieces are recognized. The numbered cyan " +
             "markers must match each visible tray tile and the green cells are the intended placement. " +
             "3. The compact top dock never needs to cover the board. The STOP label no " +
             "longer wraps; tap INFO for coordinates or CAL to cycle Global/Tall/Piece offsets. " +
             "Info and adjustments close automatically during a drag. " +
-            "4. Press CAL DRAG for the selected piece. It uses ONE uninterrupted touch " +
+            "4. Press CAL DRAG for the selected piece. Purple 4-wide strips use TWO " +
+            "distinct board stops so the moving game shadow must follow the finger " +
+            "by exactly one cell. Other pieces retain their prior calibration. " +
+            "It uses ONE uninterrupted touch " +
             "gesture: pick up, travel to the board, measure the game's colored translucent " +
-            "shadow during a longer 1.8-second board dwell, then return toward the tray " +
+            "shadow during safe board dwell(s), then return toward the tray " +
             "before releasing. This is a CALIBRATION " +
             "attempt, NOT a requested placement. The piece might still be placed unexpectedly; " +
             "wait for the result and inspect the board and tray. " +
