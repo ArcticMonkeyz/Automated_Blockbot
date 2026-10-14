@@ -1,10 +1,10 @@
-Blockbot v2.1 update (GitHub Desktop)
+RockBlockBot v2.2 — update existing GitHub repository
 
 1. Extract this ZIP on your PC.
-2. Open GitHub Desktop > Repository > Show in Explorer.
-3. Copy everything INSIDE the extracted folder into your cloned repository.
-4. Choose Replace existing files. DO NOT delete .git or .github.
-5. GitHub Desktop: Summary = "Blockbot v2.1 piece recognition"; Commit to main; Push origin.
-6. GitHub > Actions > successful build > Artifacts > download the APK ZIP.
-7. Extract app-debug.apk and install on your Pixel 7 Pro.
-8. Run a game frame and compare the three piece shapes with the game.
+2. Open GitHub Desktop -> Repository -> Show in Explorer.
+3. Copy app/, build.gradle.kts, settings.gradle.kts, README.md and UPLOAD_INSTRUCTIONS.txt from this extracted folder into your existing repository. Replace existing files.
+4. Keep .git and .github unchanged. Do not copy an extra parent folder.
+5. GitHub Desktop: Summary = "Blockbot v2.2 single move test" -> Commit to main -> Push origin.
+6. GitHub Actions -> successful build -> Artifacts -> download ZIP -> extract app-debug.apk -> install on Pixel 7 Pro.
+
+This is a ONE-DRAG diagnostic, not unattended gameplay. Read README.md before enabling accessibility.

@@ -52,6 +52,14 @@ object Solver {
   // Survival-first: low occupancy, fewer trapped cells, and a mild reward for near-complete lines.
   return -filled * 4.0 - isolated * 15.0 - adjacent * 0.25 + almost * 1.2
  }
+ /** Deterministic board prediction for post-gesture verification. */
+ fun placeAndClear(board: Long, piece: Piece, row: Int, col: Int): Long {
+  require(row >= 0 && col >= 0 && row + piece.height <= 8 && col + piece.width <= 8)
+  var mask = 0L
+  for (cell in piece.normalized) mask = mask or (1L shl ((row+cell.r)*8+col+cell.c))
+  require((board and mask) == 0L) { "Placement overlaps an occupied cell" }
+  return clear(board or mask)
+ }
  /** Searches all legal orders and placements of three fixed-orientation pieces. */
  fun solve(board: Long, pieces: List<Piece>): Plan {
   require(pieces.size == 3)
