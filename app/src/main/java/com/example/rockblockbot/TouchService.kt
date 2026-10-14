@@ -112,6 +112,65 @@ class TouchService : AccessibilityService() {
         }
     }
 
+    /** Reliable fallback: ONE Android gesture from pickup to the board and back.
+     * There is no continueStroke/segment 2; the single path releases in the tray.
+     * The short low-amplitude sweep near the board-entry point leaves time for
+     * MediaProjection to measure the game's predicted placement ghost.
+     * A return-to-tray is attempted, NOT guaranteed if the game snaps early.
+     */
+    fun probeWithReturn(fromX: Float, fromY: Float, entryX: Float, entryY: Float,
+                        callback: (Boolean, String) -> Unit): Boolean {
+        if (busy || held) return false
+        val path = Path().apply {
+            moveTo(fromX, fromY)
+            lineTo(entryX, entryY)
+            repeat(80) { k ->
+                lineTo(entryX + if (k % 2 == 0) 4f else -4f, entryY)
+            }
+            lineTo(entryX, entryY)
+            lineTo(fromX, fromY)
+        }
+        return dispatchSingle(path, 3200L, "Probe completed; returned toward tray", callback)
+    }
+
+    /** ONE unbroken Android stroke, with a small final dwell before natural
+     * ACTION_UP. Unlike the experimental held mode, no follow-up gesture can
+     * accidentally cancel the finger on segment 2.
+     * Only call after a valid shadow-probe calibration exists.
+     */
+    fun calibratedSingleDrag(fromX: Float, fromY: Float, toX: Float, toY: Float,
+                             callback: (Boolean, String) -> Unit): Boolean {
+        if (busy || held) return false
+        val path = Path().apply {
+            moveTo(fromX, fromY)
+            lineTo(toX, toY)
+            repeat(80) { k ->
+                lineTo(toX + if (k % 2 == 0) 2f else -2f, toY)
+            }
+            lineTo(toX, toY)
+        }
+        return dispatchSingle(path, 1700L, "Calibrated single stroke finished and released", callback)
+    }
+
+    private fun dispatchSingle(path: Path, duration: Long, message: String,
+                               callback: (Boolean, String) -> Unit): Boolean {
+        busy = true
+        val stroke = GestureDescription.StrokeDescription(path, 0L, duration, false)
+        val gesture = GestureDescription.Builder().addStroke(stroke).build()
+        val accepted = dispatchGesture(gesture, object : GestureResultCallback() {
+            override fun onCompleted(gestureDescription: GestureDescription?) {
+                busy = false
+                callback(true, message)
+            }
+            override fun onCancelled(gestureDescription: GestureDescription?) {
+                busy = false
+                callback(false, "Android cancelled the one-stroke gesture; inspect board/tray")
+            }
+        }, null)
+        if (!accepted) busy = false
+        return accepted
+    }
+
     /** Never wait for a UI or vision callback before requesting the next hold. */
     private fun continueImmediately(): Boolean {
         if (!held) return false

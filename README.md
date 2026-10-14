@@ -1,32 +1,34 @@
-# Rock Block Bot v4.4.1 — Board-entry + continuous held-touch trial
+# Rock Block Bot v4.4.2 — single-stroke shadow calibration
 
-**Experimental. Not yet verified on a real phone. Do not use unattended.**
+**Experimental hardware test. Do not use unattended.** This version addresses the repeated Android cancellation of **continued gesture segment 2** on the user's Pixel 7 Pro. The Android accessibility API supports continued gestures, but two live tests of this approach ended in cancellation and sometimes an unintended board placement. We therefore avoid continuation entirely for the first controlled alternative.
 
-This version addresses the two separate problems in the v4.4 screenshots: green 2×2 squares were successfully identified by four cyan tile markers, but the initial drag traveled only `(512,1804) -> (499,1762)` (still inside the tray area) and a later Android continued segment was cancelled. Since the game displays its translucent placement shadow only near/over the board, there was no usable shadow to track.
+## Two-stage workflow
 
-## What changed
+1. Share **Rock Block Saga only** when granting MediaProjection. Enable overlay and accessibility permissions.
+2. Tap **PREVIEW**. Check all numbered cyan tile centers and the green target squares. The red crosshair shows a **probe entry point** if the piece is not yet calibrated; it is **not a validated release point**.
+3. Tap **CAL DRAG** (not NEXT MOVE). A **single uninterrupted Android stroke** moves the piece into the board, oscillates within a few pixels while MediaProjection looks for its game-generated translucent shadow, then returns to the tray and releases. The result **may accidentally place** the piece; the app checks the actual board and tray afterward. Don't touch the game or press STOP during this probe.
+4. A calibration is stored **only when** at least two independent frames agree on a shadow position, the board is unchanged, and the piece visibly remains in the tray. The report displays `CALIBRATED` or `NO CALIBRATION`/`UNVERIFIED PROBE`. A failed or uncertain probe does not enable a move.
+5. With a successful probe, tap **PREVIEW** again. The red crosshair now shows the **measured release point**, which uses the game's own shadow position and the planned target (not the older per-piece guess). NEXT MOVE becomes available for that exact **shape+color and screen resolution**.
+6. NEXT MOVE performs a **single uninterrupted, calibrated swipe** and releases. The game board is verified after release. This avoids the cancelled *second* continued stroke.
 
-1. **Board-entry on the very first stroke:** The old calibrated finger endpoint is treated as an initial guess. If it's outside the board's playable rectangle, it is **clamped into the board**. For the specific failed screenshot `(499,1762)` becomes approximately `(499,1154)` on a 1080×2169 display. The first 1250 ms stroke moves there while holding the finger. This is **NOT** an automatic release.
-2. **TouchService now owns the continuous hold:** Android's `StrokeDescription.continueStroke` is called *immediately* from each segment completion callback. A new stationary segment is dispatched before any UI or image-processing callback is run. The main app queues position changes or a final release, rather than dispatching held segments itself after delayed screen processing.
-3. **Visual controller:** MediaProjection still samples the game's matching-color translucent placement shadow and compares it to Blockbot's green planned board cells. Alignment must be seen twice in distinct fresh frames before a release is queued. Offsets trigger small corrective movements. A missing/ambiguous shadow never authorizes release.
-4. **No guessing from legacy shapes:** The PREVIEW is blocked when any recognized tray piece lacks an individual-tile-center count matching its reported block count. The earlier green 2×2 vs 6-block legacy fallback must not become a move.
-5. **STOP/abort:** An attempted return-to-tray is prioritized over pending corrective movements. If Android cancels the touch, the piece may release; inspect the board and do not automatically retry.
-6. The survival solver, existing tile-center recognizer, manually confirmed PREVIEW/NEXT MOVE flow, original per-piece saved calibration, game-shadow tracker and post-release verification remain present. Previous global X/Y values are only used to choose the initial approach and **never authorize release**.
+## Safety and limitations
 
-## Safe test
+- This is **not yet live closed-loop control during NEXT MOVE**. Android's continued gestures consistently cancelled on the test device, so we use a calibration pass followed by one single-stroke placement. Alignment is **predicted from the earlier ghost**, not rechecked immediately before release.
+- A calibration probe is intended to return the piece to its tray, **but game snapping or an Android cancellation could place it unexpectedly**. The app checks for that; inspect the board before retrying.
+- A ghost partly hidden by the floating piece may be too ambiguous to measure. The probe then refuses to save calibration. No blind move is enabled.
+- One shape+color calibration is used only at the same display resolution. Other shapes require their own successful probe.
+- No autonomous repeats. PREVIEW and NEXT MOVE still require the user's explicit confirmation every time.
 
-1. Extract this ZIP and copy **its contents** to your existing GitHub Desktop clone, replacing matching files but retaining hidden `.git` and `.github` folders.
-2. Commit, push, build the APK through your existing GitHub Actions workflow and install it.
-3. Use **Share a single app > Rock Block Saga**. Press **PREVIEW**, check the cyan circles and green target squares. **Do not press NEXT MOVE** for any wrong piece count/shape.
-4. For one correct preview, press **NEXT MOVE once**. Do not touch the game during the 20–30 second experiment. The piece should **travel toward/over the board immediately** instead of moving only 40px in the tray.
-5. If shadow alignment succeeds, Blockbot releases and verifies. Otherwise it attempts to return the held piece and stops with **UNVERIFIED**. A cancelled Android gesture is *not* proof of placement or recovery.
-6. If it fails, press STOP after movement has ended and send the overlay and the report lines **Last touch path**, **Last game shadow tracking**, **Last placement check**. These distinguish a gesture failure from an invisible shadow.
+## Build
 
-**Limitations:** Android kept-stroke continuity and the live game's shadow colors cannot be fully validated without the phone. Synthetic shadow tracking passes for all five colors, but the real red sample was partially occluded and remains intentionally inconclusive. The code's held-touch lifecycle passed a local simulated Android callback test, not a hardware test. The full APK must be built via GitHub Actions.
+Copy these project files into your existing GitHub Desktop clone, preserving `.git` and `.github`; commit and push to trigger your existing **Build debug APK** workflow. Install the debug APK over the existing app.
 
 ## Local checks
 
-- `sh tests/CompileRecognitionSmoke.sh`
-- `sh tests/RunScreenshotRecognition.sh your_game_screenshot.png`
-- `kotlinc app/src/main/java/com/example/rockblockbot/DragApproach.kt tests/DragApproachTest.kt -include-runtime -d /tmp/approach.jar && java -jar /tmp/approach.jar`
-- `kotlinc app/src/main/java/com/example/rockblockbot/TouchService.kt tests/TouchServiceStubs.kt tests/TouchGraphicsStubs.kt tests/TouchEventStubs.kt tests/TouchSequencerTest.kt -include-runtime -d /tmp/touch.jar && java -jar /tmp/touch.jar`
+```sh
+sh tests/CompileRecognitionSmoke.sh
+kotlinc app/src/main/java/com/example/rockblockbot/TouchService.kt tests/TouchServiceStubs.kt tests/TouchGraphicsStubs.kt tests/TouchEventStubs.kt tests/SingleStrokeTest.kt -include-runtime -d /tmp/one-stroke.jar
+java -jar /tmp/one-stroke.jar
+```
+
+**Full Android compilation and the game's real snapping behavior must be tested on the phone.** Local tests validate Kotlin touch calls and geometry logic, not platform gesture delivery or the game's visual response.

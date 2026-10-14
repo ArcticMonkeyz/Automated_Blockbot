@@ -38,6 +38,7 @@ class CaptureService : Service() {
     private var overlay: LinearLayout? = null
     private var wm: WindowManager? = null
     private var moveButton: Button? = null
+    private var probeButton: Button? = null
     private var previewButton: Button? = null
     private var offsetLabel: TextView? = null
     private var shapeLabel: TextView? = null
@@ -79,6 +80,29 @@ class CaptureService : Service() {
     private var shadowDiagnostic: String = "No live game-shadow scan yet"
     private var shadowSampleAt: Long = 0L
     private var shadowFrames = 0
+    // v4.4.2: collect the game's live placement shadow during ONE uninterrupted
+    // outbound-and-return probe. No chained accessibility strokes are used.
+    private var probePlan: Prepared? = null
+    private var probeStartedAt = 0L
+    private val probeSamples = ArrayList<ShadowTracker.Match>()
+    private data class LearnedGrip(val x: Float, val y: Float)
+    private fun learnedGrip(piece: BoardRecognizer.ObservedPiece): LearnedGrip? {
+        val key = PieceCalibration.key(piece.signature, piece.tileColor)
+        val prefs = getSharedPreferences("shadow_probe_v442", MODE_PRIVATE)
+        if (!prefs.getBoolean("${key}_valid", false)) return null
+        val screen = screenSize()
+        if (prefs.getInt("${key}_w", -1) != screen.x ||
+            prefs.getInt("${key}_h", -1) != screen.y) return null
+        return LearnedGrip(prefs.getFloat("${key}_x", 0f), prefs.getFloat("${key}_y", 0f))
+    }
+    private fun calibratedCoords(plan: Prepared): FloatArray? {
+        val map = learnedGrip(plan.observed) ?: return null
+        val screen = screenSize()
+        val (x, y) = GripMapping.releaseFor(plan.move.col,plan.move.row,
+            GripMapping.Offset(map.x,map.y),screen.x,screen.y)
+        val origin = gestureCoords(plan)
+        return floatArrayOf(origin[0], origin[1], x, y)
+    }
     private var pendingAbortReason: String? = null
 
     private var moveCount = 0
@@ -185,6 +209,8 @@ class CaptureService : Service() {
                                     shadowDiagnostic=scan.diagnostic
                                     shadowSampleAt=now
                                     shadowFrames++
+                                    if (probePlan != null && now - probeStartedAt in 600L..3100L &&
+                                        scan.match != null) probeSamples.add(scan.match)
                                 }
                             } else {
                                 val frame=BoardRecognizer.analyze(cropped)
@@ -219,8 +245,11 @@ class CaptureService : Service() {
         val actions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         previewButton = Button(this).apply { text = "PREVIEW"; setOnClickListener { prepareMove() } }
         moveButton = Button(this).apply { text = "NEXT MOVE"; isEnabled = false; setOnClickListener { attemptOneMove() } }
+        probeButton = Button(this).apply { text = "CAL DRAG"; textSize = 11f; isEnabled = false;
+            setOnClickListener { calibrateSingleStroke() } }
         actions.addView(previewButton)
         actions.addView(moveButton)
+        actions.addView(probeButton)
         actions.addView(Button(this).apply { text = "STOP"; setOnClickListener { requestStop() } })
         panel.addView(actions)
         // Keep the board unobstructed: the former always-visible resume and
@@ -410,14 +439,16 @@ class CaptureService : Service() {
             (if (PlacementGeometry.directTallAnchor(plan.piece.height,plan.piece.width))
                 "Tall Y calibrated (trial). " else "") + "Check shape!"
         val screen = screenSize()
-        val coords = gestureCoords(plan)
+        val learnedCoords = calibratedCoords(plan)
+        val coords = learnedCoords ?: gestureCoords(plan)
         val (actualX,actualY) = effectiveOffsets(plan,screen)
         val personal = pieceAdjustment(plan.observed)
         shapeCalibrationLabel?.text = "Current ${plan.observed.tileColor} ${plan.observed.signature}: " +
             "extra X=${personal.xPx}, Y=${personal.yPx}px (saved per shape+color)"
         coordsLabel?.text = "Finger: (${coords[0].toInt()}, ${coords[1].toInt()})" +
-            " -> BOARD ENTRY (${coords[2].toInt()}, ${coords[3].toInt()}) px; " +
-            "shadow controls release; old offset X=$actualX Y=$actualY"
+            " -> ${if (learnedCoords == null) "PROBE ENTRY" else "CALIBRATED RELEASE"} " +
+            "(${coords[2].toInt()}, ${coords[3].toInt()}) px; " +
+            "single-stroke mode (no chained hold); legacy X=$actualX Y=$actualY"
         if (marker == null) {
             marker = CalibrationOverlay(this)
             val params = WindowManager.LayoutParams(
@@ -474,6 +505,7 @@ class CaptureService : Service() {
         captureFrozen = false
         removeMarker()
         moveButton?.isEnabled = false
+        probeButton?.isEnabled = false
         val frame = latest
         val expectedPieces = 3 - (moveCount % 3)
         if (frame?.missingVisiblePiece == true) {
@@ -526,12 +558,16 @@ class CaptureService : Service() {
                         SystemClock.elapsedRealtime())
                     captureFrozen = true
                     updateMarker()
-                    moveButton?.isEnabled = true
+                    probeButton?.isEnabled = true
+                    moveButton?.isEnabled = calibratedCoords(prepared!!) != null
                     setStatus("PREVIEW only: piece ${move.pieceIndex+1}, row ${move.row+1}, col ${move.col+1}. " +
                         "${piece.normalized.size} green cells = full detected shape; blue = pickup tile; red = release. " +
                         "If count/shape differs from the real piece, STOP. Calibration X=$xOffset Y=$yOffset. " +
                         "Preset shape adjustment ${PlacementGeometry.shapeCorrectionCells(observed.signature,observed.tileColor)} cells; " +
                         "personal adjustment ${pieceAdjustment(observed)}. " +
+                        (if (calibratedCoords(prepared!!) == null)
+                            "CAL DRAG required first: returns piece toward tray and measures the shadow. "
+                        else "Calibrated single-stroke NEXT MOVE available. " ) +
                         (if (PlacementGeometry.directTallAnchor(piece.height,piece.width))
                             "Tall-adjusted release (trial): effective Y=${yOffset+tallDelta}px before shape bias. " else ""))
                 }
@@ -545,65 +581,175 @@ class CaptureService : Service() {
         }
     }
 
-    /** Next move is now CLOSED LOOP: the game's colored placement ghost must
-     * match the green planned footprint in two separate settled held frames.
-     * The old release coordinate is a FIRST GUESS only; it is never released
-     * without visual confirmation. Fallback is a tray-return attempt.
+    /** Probe first, without attempting a board placement. The finger travels
+     * from the tray to the board and BACK in one uninterrupted Android stroke.
+     * The image thread collects the game's translucent landing shadow along
+     * that path. No calibration is saved unless multiple samples agree AND the
+     * board/tray return to their pre-probe state.
+     */
+    private fun calibrateSingleStroke() {
+        if (inProgress || sessionBlocked) return
+        val plan=prepared ?: run { setStatus("Press PREVIEW before CAL DRAG."); return }
+        val touch=TouchService.current ?: run {setStatus("Accessibility service missing.");return}
+        if (plan.observed.tileCenters.size != plan.observed.count) {
+            setStatus("Calibration BLOCKED: individual tile centers are uncertain.");return
+        }
+        if (SystemClock.elapsedRealtime() - plan.time > 30000L) {
+            setStatus("PREVIEW expired; press PREVIEW again."); return
+        }
+        val coords=gestureCoords(plan)
+        val screen=screenSize()
+        if(coords.any { it !in 12f..(screen.y-12f) } || coords[0]>=screen.x-12 || coords[2]>=screen.x-12) {
+            setStatus("Calibration BLOCKED: invalid finger coordinates."); return
+        }
+        probePlan=plan
+        probeSamples.clear()
+        probeStartedAt=SystemClock.elapsedRealtime()
+        inProgress=true
+        captureFrozen=false
+        prepared=null
+        removeMarker()
+        moveButton?.isEnabled=false
+        probeButton?.isEnabled=false
+        previewButton?.isEnabled=false
+        shadowSample=null;shadowFrames=0;shadowSampleAt=0L
+        shadowTarget=ShadowTracker.Target(plan.frame.board, plan.piece.normalized,
+            plan.move.row, plan.move.col, plan.observed.tileColor)
+        lastTouchPath="CAL DRAG for ${plan.observed.tileColor} ${plan.observed.signature}: " +
+            "pickup (${coords[0].toInt()},${coords[1].toInt()}) -> " +
+            "board entry (${coords[2].toInt()},${coords[3].toInt()}) -> back to tray (ONE stroke)."
+        lastShadowTracking="Calibrating: waiting for translucent game shadow during single-stroke probe."
+        lastPlacementCheck="PENDING: Return-to-tray calibration probe; no placement requested."
+        shapeLabel?.text="CAL DRAG: measuring shadow, then returning toward tray. Do not touch."
+        setStatus("Calibration trial: one uninterrupted drag out and back, then board check.")
+        val accepted=touch.probeWithReturn(coords[0],coords[1],coords[2],coords[3]) {ok,msg ->
+            handler.post { if(!stopped && probePlan===plan) finishProbe(plan,coords,ok,msg) }
+        }
+        if(!accepted)finishProbe(plan,coords,false,"Android rejected single-stroke probe")
+    }
+
+    private fun finishProbe(plan:Prepared, coords:FloatArray, gestureOk:Boolean, gestureResult:String) {
+        if(probePlan!==plan || stopped)return
+        probePlan=null
+        shadowTarget=null
+        lastGestureOutcome=gestureResult
+        // Do not infer accuracy from just one image. Two matching independently
+        // captured frames are required, and neither can be a moving-piece mask.
+        val readings=probeSamples.groupBy { it.row to it.col }
+            .toList().sortedByDescending { (_, values) -> values.size }
+        val best=readings.firstOrNull()
+        val second=readings.getOrNull(1)?.second?.size ?: 0
+        val observed=best?.second?.size ?: 0
+        val sample=best?.second?.maxByOrNull {it.strength + it.confidence}
+        val confident=gestureOk && observed >= 2 && observed > second && sample != null
+        lastShadowTracking=if(sample!=null)
+            "Probe observed ${sample.colorlessPosition()} in $observed frames; " +
+            "other position samples=$second; strength ${"%.2f".format(Locale.US,sample.strength)}. " +
+            "Fingerprint ${plan.observed.tileColor} ${plan.observed.signature}."
+        else "No confident game placement shadow captured during board-entry probe. $shadowDiagnostic"
+        probeSamples.clear()
+        // Resume ordinary recognition after the finger has returned toward tray.
+        val waitingSince=SystemClock.elapsedRealtime()
+        fun settle() {
+            if (stopped)return
+            val actual=latest
+            val fresh=latestAt>waitingSince+300L &&
+                SystemClock.elapsedRealtime()-latestAt<2100L
+            val returned=fresh && actual?.board==plan.frame.board &&
+                actual?.pieces?.getOrNull(plan.move.pieceIndex)?.signature==plan.observed.signature
+            if (returned && stableCount>=2) {
+                if(confident && sample!=null) {
+                    val screen=screenSize()
+                    val mapping=GripMapping.fromProbe(coords[2],coords[3],
+                        sample.col,sample.row,screen.x,screen.y)
+                    val offsetX=mapping.x
+                    val offsetY=mapping.y
+                    val key=PieceCalibration.key(plan.observed.signature,plan.observed.tileColor)
+                    getSharedPreferences("shadow_probe_v442",MODE_PRIVATE).edit()
+                        .putFloat("${key}_x",offsetX).putFloat("${key}_y",offsetY)
+                        .putInt("${key}_w",screen.x).putInt("${key}_h",screen.y)
+                        .putBoolean("${key}_valid",true).apply()
+                    lastPlacementCheck="CALIBRATED: The piece returned to the tray; " +
+                        "game shadow matched $observed frames at row ${sample.row+1}, " +
+                        "col ${sample.col+1}. Learned finger-to-shadow offset " +
+                        "X=${offsetX.toInt()} Y=${offsetY.toInt()} px. " +
+                        "Press PREVIEW again to inspect the calibrated NEXT MOVE. " +
+                        "Single-stroke placement is a trial, NOT live closed-loop control."
+                    sessionBlocked=false
+                } else {
+                    lastPlacementCheck="NO CALIBRATION: Returned to tray but game shadow was " +
+                        "uncertain ($observed agreeing captures). $gestureResult"
+                    sessionBlocked=false
+                }
+            } else if(SystemClock.elapsedRealtime()-waitingSince>6500L) {
+                sessionBlocked=true
+                lastPlacementCheck="UNVERIFIED PROBE: Piece did not clearly return to tray " +
+                    "or board changed. STOP and inspect game. $gestureResult"
+            } else {
+                handler.postDelayed({settle()},350L)
+                return
+            }
+            inProgress=false
+            shapeLabel?.text=lastPlacementCheck
+            coordsLabel?.text="See last shadow tracking report."
+            previewButton?.isEnabled=!sessionBlocked
+            moveButton?.isEnabled=false;probeButton?.isEnabled=false
+            setStatus(lastPlacementCheck)
+        }
+        handler.postDelayed({settle()},900L)
+    }
+
+    private fun ShadowTracker.Match.colorlessPosition():String =
+        "row ${row+1}, col ${col+1}"
+
+    /** Uses the measured finger-to-shadow relation and a SINGLE Android
+     * gesture. No more cancelled continuation segment 2. This is a calibrated
+     * open-loop release, explicitly NOT a live shadow-verified release.
      */
     private fun attemptOneMove() {
         if (inProgress || sessionBlocked) return
         val plan=prepared ?: run {setStatus("Tap PREVIEW first.");return}
-        val touch=TouchService.current ?: run {
-            setStatus("Enable the accessibility service before NEXT MOVE.");return
+        val touch=TouchService.current ?: run {setStatus("Accessibility service missing.");return}
+        if (plan.observed.tileCenters.size!=plan.observed.count) {
+            setStatus("MOVE BLOCKED: individual tile centers uncertain.");return
         }
-        if (plan.piece.normalized.size!=plan.observed.count ||
-            plan.observed.tileCenters.size!=plan.observed.count) {
-            sessionBlocked=true
-            finish("UNVERIFIED: Individual tile count incomplete; no move made.")
-            return
-        }
-        if(SystemClock.elapsedRealtime()-plan.time>30000L) {
-            prepared=null;captureFrozen=false;moveButton?.isEnabled=false;removeMarker()
-            setStatus("Preview expired. Wait for a fresh frame and PREVIEW again.")
-            return
+        val coords=calibratedCoords(plan) ?: run {
+            setStatus("MOVE BLOCKED: Run CAL DRAG for this piece first, then PREVIEW again.");return
         }
         val screen=screenSize()
-        val coordinates=gestureCoords(plan)
-        if(coordinates.any{ it<12f } || coordinates[0]>=screen.x-12f || coordinates[1]>=screen.y-12f ||
-            coordinates[2]>=screen.x-12f || coordinates[3]>=screen.y-12f) {
-            setStatus("BLOCKED: Initial pointer path would leave the screen. No move attempted.")
-            return
+        if (SystemClock.elapsedRealtime()-plan.time>30000L || coords[0] !in 12f..(screen.x-12f) ||
+            coords[1] !in 12f..(screen.y-12f) || coords[2] !in 12f..(screen.x-12f) ||
+            coords[3] !in 12f..(screen.y-12f)) {
+            setStatus("MOVE BLOCKED: stale preview or calibrated release outside screen.");return
         }
-        val t=TrackingMove(plan,coordinates[0],coordinates[1],coordinates[2],coordinates[3])
         inProgress=true
         captureFrozen=false
         prepared=null
-        removeMarker() // Remove our own green overlay from the image being measured.
-        moveButton?.isEnabled=false
+        removeMarker()
+        moveButton?.isEnabled=false;probeButton?.isEnabled=false
         previewButton?.isEnabled=false
-        tracking=t
-        pendingAbortReason=null
-        shadowSample=null;shadowSampleAt=0;shadowFrames=0
-        shadowDiagnostic="Waiting for first live shadow sample"
-        shadowTarget=ShadowTracker.Target(plan.frame.board,plan.piece.normalized,
-            plan.move.row,plan.move.col,plan.observed.tileColor)
-        lastGestureOutcome="Holding pointer; waiting for game's placement shadow"
-        lastTouchPath="Piece ${plan.move.pieceIndex+1} ${plan.observed.signature}: " +
-            "pickup (${coordinates[0].toInt()},${coordinates[1].toInt()}); " +
-            "first BOARD ENTRY (${coordinates[2].toInt()},${coordinates[3].toInt()}); " +
-            "continuous hold with shadow tracking, no blind release"
-        lastPlacementCheck="PENDING: Tracking game placement shadow before release."
-        lastShadowTracking="Waiting for live translucent ${plan.observed.tileColor} placement ghost."
-        shapeLabel?.text="Moving onto board while holding. Looking for colored placement shadow..."
-        setStatus("Moving toward board; release only after game shadow matches target.")
-        val started=touch.beginHeldDrag(t.pickupX,t.pickupY,t.fingerX,t.fingerY) { ok,why ->
+        lastTouchPath="CALIBRATED ONE STROKE ${plan.observed.tileColor} ${plan.observed.signature}: " +
+            "(${coords[0].toInt()},${coords[1].toInt()}) -> " +
+            "(${coords[2].toInt()},${coords[3].toInt()}); no segment 2."
+        lastPlacementCheck="PENDING: one uninterrupted calibrated gesture."
+        lastGestureOutcome="Calibrated single stroke in progress"
+        shapeLabel?.text="Calibrated single-stroke placement. Wait for board verification."
+        setStatus("Single-stroke trial: moving and releasing once; no Android continuation.")
+        val accepted=touch.calibratedSingleDrag(coords[0],coords[1],coords[2],coords[3]) {ok,msg->
             handler.post {
-                if(tracking!==t || stopped)return@post
-                if(!ok)dragFailure(t,why)
-                else holdForVisualCheck(t)
+                if(stopped)return@post
+                lastGestureOutcome=msg
+                if (ok) verifyReleasedPiece(plan)
+                else {
+                    sessionBlocked=true
+                    finish("UNVERIFIED: $msg; cancellation can accidentally place a piece. Inspect board.")
+                }
             }
         }
-        if(!started) dragFailure(t,"Android rejected initial held gesture")
+        if(!accepted) {
+            sessionBlocked=true
+            finish("UNVERIFIED: Android refused single-stroke placement. Inspect board.")
+        }
     }
 
     private fun holdForVisualCheck(t: TrackingMove) {
@@ -771,6 +917,10 @@ class CaptureService : Service() {
     }
 
     private fun requestStop() {
+        if (probePlan != null || (inProgress && tracking == null)) {
+            setStatus("One-stroke calibration/placement is active. Wait for its result before STOP.")
+            return
+        }
         if(tracking != null) {
             abortTracking("STOP pressed during drag")
             return // The user can press STOP again after return concludes.
@@ -782,7 +932,7 @@ class CaptureService : Service() {
         // Only the game's ghost alignment authorizes release. Then verify the
         // post-release board as before, including any row or column clears.
         val verificationStarted=SystemClock.elapsedRealtime()
-        shapeLabel?.text="Released after shadow alignment. Verifying settled board..."
+        shapeLabel?.text="Gesture ended. Verifying settled board..."
         fun verify() {
             if(stopped)return
             val actual=latest
@@ -793,7 +943,7 @@ class CaptureService : Service() {
             if(recent && stableCount>=2 && actual?.board==plan.expected &&
                 (pieceRemoved || lastPiece)) {
                 moveCount++;verifiedThisSession++
-                finish("VERIFIED: Ghost-aligned move $verifiedThisSession placed successfully. " +
+                finish("VERIFIED: Calibrated single-stroke move $verifiedThisSession placed successfully. " +
                     "Tap PREVIEW for the next piece.")
                 return
             }
@@ -842,6 +992,7 @@ class CaptureService : Service() {
         shapeCalibrationLabel?.text = "Per-piece calibration is saved. Tap PREVIEW before moving again."
         // Every move requires a fresh preview and explicit NEXT MOVE tap.
         moveButton?.isEnabled=false
+        probeButton?.isEnabled=false
         previewButton?.isEnabled = !sessionBlocked
         setStatus(message)
     }
@@ -849,18 +1000,19 @@ class CaptureService : Service() {
         // If the user stops before the 6-second verification period completes,
         // preserve that fact instead of saying no move was attempted.
         if (inProgress) lastPlacementCheck =
-            "INCOMPLETE: Capture stopped before tracked placement verification finished. " +
+            "INCOMPLETE: Capture stopped before calibration/placement verification finished. " +
             "Do not assume the drag succeeded."
         if (tracking != null) TouchService.current?.let { touch ->
             if (touch.isHolding) touch.returnToTray { _, _ -> }
         }
         shadowTarget=null
         tracking=null
+        probePlan=null
         stopped=true
         captureFrozen=false
         removeMarker()
         try { overlay?.let { wm?.removeView(it) } } catch (_: Exception) {}
-        overlay=null; moveButton=null; previewButton=null; offsetLabel=null; shapeLabel=null
+        overlay=null; moveButton=null; probeButton=null; previewButton=null; offsetLabel=null; shapeLabel=null
         coordsLabel=null; shapeCalibrationLabel=null; shapeCalibrationRow=null; prepared=null
         reader?.setOnImageAvailableListener(null,null)
         imageThread?.quitSafely(); imageThread=null

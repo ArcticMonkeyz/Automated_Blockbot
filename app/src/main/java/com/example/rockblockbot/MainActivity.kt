@@ -32,24 +32,25 @@ class MainActivity : Activity() {
         fun button(value: String, fn: () -> Unit) {
             layout.addView(Button(this).apply { text=value; setOnClickListener { fn() } })
         }
-        label("Rock Block Bot v4.4 — shadow-guided drag (TRIAL)",22f)
-        label("1. Enable floating overlay/accessibility, then SHARE A SINGLE APP: Rock Block Saga. " +
-            "2. PREVIEW with all tray pieces recognized. Confirm the entire shape, numbered " +
-            "source tiles, and GREEN planned board cells. The red crosshair is only the FIRST " +
-            "GUESS for the finger, not the game drop position. " +
-            "3. NEXT MOVE holds the virtual finger down, looks for the game's TRANSLUCENT " +
-            "same-color placement shadow, adjusts the held drag until that shadow matches " +
-            "the planned green cells in two separate captures, THEN releases and checks the board. " +
-            "The bot does not intentionally release at an unverified guess. If tracking fails, " +
-            "it attempts to return the piece to the tray and BLOCKS further moves. " +
-            "4. Be patient: a move can take up to about 20 seconds for several corrections " +
-            "plus 7 seconds for final verification. Do not touch the game during a test. " +
-            "STOP during a held drag requests a return-to-tray; press STOP again after it finishes. " +
-            "5. If VERIFIED, PREVIEW again before each NEXT MOVE. If UNVERIFIED, STOP and send " +
-            "Last game shadow tracking and Last placement check. " +
-            "Keep existing per-piece calibration unless needed for the first guess. " +
-            "This is EXPERIMENTAL: game ghosts may be occluded, colors vary, Android may " +
-            "interrupt held gestures, and tray return is best-effort only. No unattended play.")
+        label("Rock Block Bot v4.4.2 — one-stroke shadow calibration (TRIAL)",22f)
+        label("1. Enable overlay/accessibility and SHARE A SINGLE APP: Rock Block Saga. " +
+            "2. PREVIEW only when all real pieces are recognized. The numbered cyan " +
+            "markers must match each visible tray tile and the green cells are the intended placement. " +
+            "3. Press CAL DRAG for the selected piece. It uses ONE uninterrupted touch " +
+            "gesture: pick up, travel to the board, measure the game's colored translucent " +
+            "shadow, then return toward the tray before releasing. This is a CALIBRATION " +
+            "attempt, NOT a requested placement. The piece might still be placed unexpectedly; " +
+            "wait for the result and inspect the board and tray. " +
+            "4. If the report says CALIBRATED and the piece returned, press PREVIEW again. " +
+            "NEXT MOVE is enabled for that shape/color and uses ONE normal gesture at the " +
+            "measured endpoint. This is a trial, NOT live visual feedback during the release. " +
+            "5. After NEXT MOVE, wait for VERIFIED or UNVERIFIED and inspect the board. " +
+            "Any uncertain probe or failed placement blocks blind continuation. " +
+            "Do not press STOP or touch the game while a gesture is moving. " +
+            "6. Saved per-piece offsets from older versions remain, but the new measured " +
+            "finger-to-shadow coordinate mapping is stored separately for this phone resolution. " +
+            "No unattended play. Android may interrupt even a single gesture; return-to-tray " +
+            "is best-effort. Share Last game shadow tracking and Last placement check if it fails.")
         button("Allow floating controls") {
             startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,Uri.parse("package:$packageName")))
         }

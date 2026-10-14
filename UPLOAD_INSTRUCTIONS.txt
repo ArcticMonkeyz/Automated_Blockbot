@@ -1,14 +1,13 @@
-RockBlockBot v4.4.1 - HELD TOUCH + BOARD ENTRY EXPERIMENT
+RockBlockBot v4.4.2 - ONE STROKE SHADOW CALIBRATION (EXPERIMENTAL)
 
-1. Extract ZIP. Copy its project contents into your existing GitHub Desktop repository.
-2. Keep hidden .git and .github folders from your old clone.
-3. Commit, Push origin, then open GitHub Actions > Build debug APK.
-4. Install the produced APK over your old Blockbot app.
-5. Share single app (Rock Block Saga). PREVIEW and inspect cyan tile counts.
-6. Tap NEXT MOVE for ONE correct piece; watch that it MOVES ONTO THE BOARD,
-   unlike the v4.4 attempt that moved only 42px up in the tray.
-7. Shadow must match the green target twice before release. If tracking fails
-   or Android cancels, STOP, inspect the game, and send the full report.
-8. Do not assume a held gesture succeeded merely because Android accepted it.
+1. Copy these files into your existing repo; keep .git and .github.
+2. GitHub Desktop: Commit and Push.
+3. GitHub Actions: build debug APK and install.
+4. Share a single app: Rock Block Saga. Tap PREVIEW and confirm the real shape.
+5. Tap CAL DRAG first. This goes TO the board and BACK in one Android gesture.
+   It is designed to return the piece, but could still accidentally place it.
+6. Wait for CALIBRATED and confirm board is unchanged and piece still in tray.
+7. Press PREVIEW again. NEXT MOVE uses the measured single-stroke release coordinate.
+8. Wait for VERIFIED or UNVERIFIED. Never continue after unexpected placement.
 
-Android build and real-world shadow alignment remain unverified locally.
+This version avoids cancelled continuation segment 2. It is NOT true live closed-loop movement yet.
