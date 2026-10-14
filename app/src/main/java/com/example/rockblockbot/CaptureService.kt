@@ -16,6 +16,8 @@ import android.media.projection.MediaProjectionManager
 import android.os.*
 import android.provider.Settings
 import android.view.Gravity
+import android.text.TextUtils
+import android.widget.ScrollView
 import android.view.WindowManager
 import android.widget.Button
 import android.widget.LinearLayout
@@ -53,6 +55,11 @@ class CaptureService : Service() {
     private var coordsLabel: TextView? = null
     private var shapeCalibrationLabel: TextView? = null
     private var shapeCalibrationRow: LinearLayout? = null
+    private var detailsPanel: ScrollView? = null
+    private var calibrationControls: LinearLayout? = null
+    private var calibrationToggle: Button? = null
+    private var infoToggle: Button? = null
+    private var calibrationPage = 0 // 0 hidden, 1 global, 2 tall, 3 per-piece
     private var lastTouchPath = "No gesture dispatched yet."
     private var lastPlacementCheck = "No confirmed placement yet."
     private var lastShadowTracking = "Not tested in this session"
@@ -85,6 +92,9 @@ class CaptureService : Service() {
     private var probePlan: Prepared? = null
     private var probeStartedAt = 0L
     private val probeSamples = ArrayList<ShadowTracker.Match>()
+    private var probeSampleWindow = ProbeTiming.Window(0L, 0L)
+    private var probeObserved = 0
+    private var probeRejected = 0
     private data class LearnedGrip(val x: Float, val y: Float)
     private fun learnedGrip(piece: BoardRecognizer.ObservedPiece): LearnedGrip? {
         val key = PieceCalibration.key(piece.signature, piece.tileColor)
@@ -209,8 +219,13 @@ class CaptureService : Service() {
                                     shadowDiagnostic=scan.diagnostic
                                     shadowSampleAt=now
                                     shadowFrames++
-                                    if (probePlan != null && now - probeStartedAt in 600L..3100L &&
-                                        scan.match != null) probeSamples.add(scan.match)
+                                    if (probePlan != null &&
+                                        probeSampleWindow.includes(now - probeStartedAt)) {
+                                        if (scan.match != null) {
+                                            probeSamples.add(scan.match)
+                                            probeObserved++
+                                        } else probeRejected++
+                                    }
                                 }
                             } else {
                                 val frame=BoardRecognizer.analyze(cropped)
@@ -235,112 +250,191 @@ class CaptureService : Service() {
         } catch (e: Exception) { setStatus("Start failed: ${e.message}"); stopSelf() }
         return START_NOT_STICKY
     }
+    /** One compact dock ABOVE the board. No row can grow because of button
+     * text wrapping, and optional calibration/info panels have fixed heights.
+     * The dock stays available during a gesture but never expands over play.
+     */
     private fun createOverlay() {
-        if (!Settings.canDrawOverlays(this)) { setStatus("Floating controls permission missing."); return }
+        if (!Settings.canDrawOverlays(this)) {
+            setStatus("Floating controls permission missing."); return
+        }
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
+        val dpScale = resources.displayMetrics.density
+        fun dp(n: Int) = (n * dpScale + .5f).toInt()
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(0xDD222222.toInt())
+            setPadding(dp(3), dp(1), dp(3), dp(1))
+            setBackgroundColor(0xD91B2631.toInt())
+        }
+        fun button(textValue: String, sizeSp: Float, weight: Float,
+                   parent: LinearLayout, heightDp: Int,
+                   onTap: () -> Unit): Button {
+            val b = Button(this).apply {
+                text = textValue
+                textSize = sizeSp
+                setAllCaps(false)
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
+                minWidth = 0
+                minimumWidth = 0
+                minHeight = 0
+                minimumHeight = 0
+                setPadding(dp(2), 0, dp(2), 0)
+                gravity = Gravity.CENTER
+                setOnClickListener { onTap() }
+            }
+            parent.addView(b, LinearLayout.LayoutParams(0, dp(heightDp), weight))
+            return b
         }
         val actions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        previewButton = Button(this).apply { text = "PREVIEW"; setOnClickListener { prepareMove() } }
-        moveButton = Button(this).apply { text = "NEXT MOVE"; isEnabled = false; setOnClickListener { attemptOneMove() } }
-        probeButton = Button(this).apply { text = "CAL DRAG"; textSize = 11f; isEnabled = false;
-            setOnClickListener { calibrateSingleStroke() } }
-        actions.addView(previewButton)
-        actions.addView(moveButton)
-        actions.addView(probeButton)
-        actions.addView(Button(this).apply { text = "STOP"; setOnClickListener { requestStop() } })
+        previewButton = button("PREVIEW", 11f, 1.02f, actions, 40) { prepareMove() }
+        moveButton = button("NEXT MOVE", 10f, 1.17f, actions, 40) { attemptOneMove() }.also {
+            it.isEnabled = false
+        }
+        probeButton = button("CAL DRAG", 10f, 1.13f, actions, 40) { calibrateSingleStroke() }.also {
+            it.isEnabled = false
+        }
+        button("STOP", 11f, .72f, actions, 40) { requestStop() }
         panel.addView(actions)
-        // Keep the board unobstructed: the former always-visible resume and
-        // calibration rows reached the first board row on this phone.
-        val optionsRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        optionsRow.addView(Button(this).apply {
-            text = "RESUME 1/2"
-            textSize = 11f
-            setOnClickListener { resumePartialTray() }
-        })
-        val adjustments = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
+
+        val options = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        button("RESUME 1/2", 10f, 1f, options, 28) { resumePartialTray() }
+        calibrationToggle = button("CAL", 10f, .70f, options, 28) {
+            calibrationPage = (calibrationPage + 1) % 4
+            updateCalibrationControls()
+        }
+        infoToggle = button("INFO", 10f, .70f, options, 28) {
+            val opening = detailsPanel?.visibility != View.VISIBLE
+            calibrationPage = 0
+            updateCalibrationControls()
+            detailsPanel?.visibility = if (opening) View.VISIBLE else View.GONE
+            infoToggle?.text = if (opening) "HIDE INFO" else "INFO"
+        }
+        panel.addView(options)
+
+        calibrationControls = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
             visibility = View.GONE
         }
-        val globalAdjustments = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        val tallAdjustments = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        adjustments.addView(globalAdjustments)
-        adjustments.addView(tallAdjustments)
-        shapeCalibrationRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        adjustments.addView(shapeCalibrationRow)
-        val calibrationToggle = Button(this).apply {
-            text = "SHOW CAL"
-            textSize = 11f
-            setOnClickListener {
-                val opening = adjustments.visibility != View.VISIBLE
-                adjustments.visibility = if (opening) View.VISIBLE else View.GONE
-                text = if (opening) "HIDE CAL" else "SHOW CAL"
-            }
-        }
-        optionsRow.addView(calibrationToggle)
-        panel.addView(optionsRow)
-        fun adjustButton(parent: LinearLayout, label: String, onPress: () -> Unit) {
-            parent.addView(Button(this).apply {
-                text = label
-                textSize = 11f
-                setOnClickListener { onPress() }
-            })
-        }
-        adjustButton(globalAdjustments, "X -") { adjust(-20, 0) }
-        adjustButton(globalAdjustments, "X +") { adjust(20, 0) }
-        adjustButton(globalAdjustments, "Y -") { adjust(0, -20) }
-        adjustButton(globalAdjustments, "Y +") { adjust(0, 20) }
-        adjustButton(tallAdjustments, "TALL Y -") { adjustTall(-20) }
-        adjustButton(tallAdjustments, "TALL Y +") { adjustTall(20) }
-        shapeCalibrationRow?.let { row ->
-            adjustButton(row, "PIECE X-") { adjustPiece(-20,0) }
-            adjustButton(row, "PIECE X+") { adjustPiece(20,0) }
-            adjustButton(row, "PIECE Y-") { adjustPiece(0,-20) }
-            adjustButton(row, "PIECE Y+") { adjustPiece(0,20) }
-        }
-        panel.addView(adjustments)
-        offsetLabel = TextView(this).apply {
-            setTextColor(0xFFFFFFFF.toInt())
-            textSize = 12f
-        }
-        panel.addView(offsetLabel)
-        shapeCalibrationLabel = TextView(this).apply {
-            setTextColor(0xFFB7F6CF.toInt())
-            textSize = 11f
-            text = "Per-piece calibration becomes available after PREVIEW."
-        }
-        panel.addView(shapeCalibrationLabel)
+        shapeCalibrationRow = calibrationControls
+        panel.addView(calibrationControls)
+
         shapeLabel = TextView(this).apply {
             setTextColor(0xFFFFFFFF.toInt())
-            textSize = 12f
-            maxLines = 3
-            text = "Tap PREVIEW to inspect the detected shape."
+            textSize = 10.5f
+            maxLines = 2
+            ellipsize = TextUtils.TruncateAt.END
+            text = "PREVIEW a piece. CAL DRAG measures its landing shadow."
+            setPadding(dp(3), dp(1), dp(3), dp(1))
         }
-        panel.addView(shapeLabel)
+        panel.addView(shapeLabel, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, dp(32)))
+
+        val infoText = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        offsetLabel = TextView(this).apply {
+            setTextColor(0xFFFFFFFF.toInt())
+            textSize = 10f
+            maxLines = 1
+        }
+        infoText.addView(offsetLabel)
+        shapeCalibrationLabel = TextView(this).apply {
+            setTextColor(0xFFB7F6CF.toInt())
+            textSize = 10f
+            maxLines = 2
+            text = "Per-piece calibration available after PREVIEW."
+        }
+        infoText.addView(shapeCalibrationLabel)
         coordsLabel = TextView(this).apply {
             setTextColor(0xFFE1F7FF.toInt())
-            textSize = 11f
+            textSize = 10f
             maxLines = 2
             text = "Pickup/release coordinates appear after PREVIEW."
         }
-        panel.addView(coordsLabel)
+        infoText.addView(coordsLabel)
+        detailsPanel = ScrollView(this).apply {
+            visibility = View.GONE
+            isVerticalScrollBarEnabled = true
+            addView(infoText)
+        }
+        panel.addView(detailsPanel, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, dp(28)))
         updateOffsetLabel()
         val params = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
             PixelFormat.TRANSLUCENT
         ).apply {
-            // At the very top of the usable window, below Android's system bar.
-            // The shortened panel ends well above the game's first board row.
             gravity = Gravity.TOP or Gravity.START
-            x = 4
+            x = 0
             y = 0
         }
-        wm?.addView(panel,params)
+        wm?.addView(panel, params)
         overlay = panel
+    }
+
+    /** Switch calibration categories WITHOUT adding rows below the board. */
+    private fun updateCalibrationControls() {
+        detailsPanel?.visibility = View.GONE
+        infoToggle?.text = "INFO"
+        val host = calibrationControls ?: return
+        host.removeAllViews()
+        host.visibility = if (calibrationPage == 0) View.GONE else View.VISIBLE
+        calibrationToggle?.text = when (calibrationPage) {
+            1 -> "X/Y"
+            2 -> "TALL Y"
+            3 -> "PIECE"
+            else -> "CAL"
+        }
+        if (calibrationPage == 0) return
+        val dpScale = resources.displayMetrics.density
+        fun dp(n: Int) = (n * dpScale + .5f).toInt()
+        fun control(textValue: String, callback: () -> Unit) {
+            val b = Button(this).apply {
+                text = textValue
+                textSize = 10f
+                setAllCaps(false)
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
+                minHeight = 0
+                minimumHeight = 0
+                minWidth = 0
+                minimumWidth = 0
+                setPadding(0,0,0,0)
+                setOnClickListener { callback() }
+            }
+            host.addView(b, LinearLayout.LayoutParams(0, dp(28), 1f))
+        }
+        when (calibrationPage) {
+            1 -> {
+                control("X -") { adjust(-20, 0) }
+                control("X +") { adjust(20, 0) }
+                control("Y -") { adjust(0, -20) }
+                control("Y +") { adjust(0, 20) }
+            }
+            2 -> {
+                control("TALL Y -") { adjustTall(-20) }
+                control("TALL Y +") { adjustTall(20) }
+                control("HIDE") { calibrationPage = 0; updateCalibrationControls() }
+            }
+            3 -> {
+                control("PIECE X-") { adjustPiece(-20, 0) }
+                control("PIECE X+") { adjustPiece(20, 0) }
+                control("PIECE Y-") { adjustPiece(0, -20) }
+                control("PIECE Y+") { adjustPiece(0, 20) }
+            }
+        }
+    }
+
+    private fun closeFloatingDetailsForDrag() {
+        calibrationPage = 0
+        updateCalibrationControls()
+        detailsPanel?.visibility = View.GONE
+        infoToggle?.text = "INFO"
     }
 
     private fun updateOffsetLabel() {
@@ -431,13 +525,9 @@ class CaptureService : Service() {
 
     private fun updateMarker() {
         val plan = prepared ?: return
-        shapeLabel?.text = "Piece ${plan.move.pieceIndex+1}: ${plan.observed.signature} " +
-            "(${plan.observed.count} blocks); pickup tile: " +
-            "row ${plan.observed.gripRow+1}, col ${plan.observed.gripCol+1}. " +
-            "${plan.observed.detectionMethod} (${plan.observed.tileCenters.size} marked); " +
-            "Shape correction: ${PlacementGeometry.shapeCorrectionCells(plan.observed.signature,plan.observed.tileColor)} cells; " +
-            (if (PlacementGeometry.directTallAnchor(plan.piece.height,plan.piece.width))
-                "Tall Y calibrated (trial). " else "") + "Check shape!"
+        shapeLabel?.text = "Piece ${plan.move.pieceIndex+1}: ${plan.observed.tileColor} " +
+            "${plan.observed.signature}, ${plan.observed.count} tiles. " +
+            "Check cyan markers and green target before CAL DRAG."
         val screen = screenSize()
         val learnedCoords = calibratedCoords(plan)
         val coords = learnedCoords ?: gestureCoords(plan)
@@ -604,8 +694,13 @@ class CaptureService : Service() {
         }
         probePlan=plan
         probeSamples.clear()
+        probeObserved=0
+        probeRejected=0
         probeStartedAt=SystemClock.elapsedRealtime()
+        probeSampleWindow=ProbeTiming.observationWindow(
+            coords[0],coords[1],coords[2],coords[3])
         inProgress=true
+        closeFloatingDetailsForDrag()
         captureFrozen=false
         prepared=null
         removeMarker()
@@ -618,7 +713,9 @@ class CaptureService : Service() {
         lastTouchPath="CAL DRAG for ${plan.observed.tileColor} ${plan.observed.signature}: " +
             "pickup (${coords[0].toInt()},${coords[1].toInt()}) -> " +
             "board entry (${coords[2].toInt()},${coords[3].toInt()}) -> back to tray (ONE stroke)."
-        lastShadowTracking="Calibrating: waiting for translucent game shadow during single-stroke probe."
+        lastShadowTracking="Calibrating: sampling the game's colored shadow at " +
+            "${probeSampleWindow.fromMs}-${probeSampleWindow.toMs} ms while " +
+            "the piece dwells over the board (not during travel/return)."
         lastPlacementCheck="PENDING: Return-to-tray calibration probe; no placement requested."
         shapeLabel?.text="CAL DRAG: measuring shadow, then returning toward tray. Do not touch."
         setStatus("Calibration trial: one uninterrupted drag out and back, then board check.")
@@ -644,9 +741,13 @@ class CaptureService : Service() {
         val confident=gestureOk && observed >= 2 && observed > second && sample != null
         lastShadowTracking=if(sample!=null)
             "Probe observed ${sample.colorlessPosition()} in $observed frames; " +
-            "other position samples=$second; strength ${"%.2f".format(Locale.US,sample.strength)}. " +
+            "other position samples=$second; strength ${"%.2f".format(Locale.US,sample.strength)}; " +
+            "$probeObserved candidate and $probeRejected rejected frames during dwell. " +
             "Fingerprint ${plan.observed.tileColor} ${plan.observed.signature}."
-        else "No confident game placement shadow captured during board-entry probe. $shadowDiagnostic"
+        else "No agreeing shadow during the board-entry dwell: " +
+            "$probeObserved candidate frame(s), $probeRejected rejected; " +
+            "sampling ${probeSampleWindow.fromMs}-${probeSampleWindow.toMs} ms. " +
+            "$shadowDiagnostic"
         probeSamples.clear()
         // Resume ordinary recognition after the finger has returned toward tray.
         val waitingSince=SystemClock.elapsedRealtime()
@@ -723,6 +824,7 @@ class CaptureService : Service() {
             setStatus("MOVE BLOCKED: stale preview or calibrated release outside screen.");return
         }
         inProgress=true
+        closeFloatingDetailsForDrag()
         captureFrozen=false
         prepared=null
         removeMarker()
@@ -1013,7 +1115,9 @@ class CaptureService : Service() {
         removeMarker()
         try { overlay?.let { wm?.removeView(it) } } catch (_: Exception) {}
         overlay=null; moveButton=null; probeButton=null; previewButton=null; offsetLabel=null; shapeLabel=null
-        coordsLabel=null; shapeCalibrationLabel=null; shapeCalibrationRow=null; prepared=null
+        coordsLabel=null; shapeCalibrationLabel=null; shapeCalibrationRow=null
+        detailsPanel=null; calibrationControls=null; calibrationToggle=null; infoToggle=null
+        prepared=null
         reader?.setOnImageAvailableListener(null,null)
         imageThread?.quitSafely(); imageThread=null
         display?.release(); display=null

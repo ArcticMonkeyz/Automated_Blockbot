@@ -124,13 +124,18 @@ class TouchService : AccessibilityService() {
         val path = Path().apply {
             moveTo(fromX, fromY)
             lineTo(entryX, entryY)
-            repeat(80) { k ->
-                lineTo(entryX + if (k % 2 == 0) 4f else -4f, entryY)
+            // Long tiny oscillation DWELLS over the board long enough to
+            // capture several independent game-shadow frames. It stays in
+            // approximately the same snap cell and never releases early.
+            repeat(ProbeTiming.SWEEP_COUNT) { k ->
+                lineTo(entryX + if (k % 2 == 0) ProbeTiming.SWEEP_PX
+                          else -ProbeTiming.SWEEP_PX, entryY)
             }
             lineTo(entryX, entryY)
             lineTo(fromX, fromY)
         }
-        return dispatchSingle(path, 3200L, "Probe completed; returned toward tray", callback)
+        return dispatchSingle(path, ProbeTiming.DURATION_MS,
+            "Probe completed; returned toward tray", callback)
     }
 
     /** ONE unbroken Android stroke, with a small final dwell before natural

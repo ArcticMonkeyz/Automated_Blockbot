@@ -1,6 +1,12 @@
-# Rock Block Bot v4.4.2 — single-stroke shadow calibration
+# Rock Block Bot v4.4.3 — compact dock + timed shadow sampling
 
 **Experimental hardware test. Do not use unattended.** This version addresses the repeated Android cancellation of **continued gesture segment 2** on the user's Pixel 7 Pro. The Android accessibility API supports continued gestures, but two live tests of this approach ended in cancellation and sometimes an unintended board placement. We therefore avoid continuation entirely for the first controlled alternative.
+
+## Improvements over v4.4.2
+
+- **Compact dock entirely above the 8×8 board:** short fixed-height PREVIEW, NEXT MOVE, CAL DRAG, STOP buttons. STOP no longer wraps vertically. INFO scrolls diagnostic details in a small capped area; CAL cycles GLOBAL, TALL and PIECE adjustments in one compact row. Both collapse before any gesture, keeping the placement-preview area visible.
+- **More stable shadow measurement:** the one-stroke CAL DRAG stays above the board longer (4200ms total), with a small 6px sweep for roughly 1.8 seconds of steady-game shadow visibility. Samples are collected only during the predicted board dwell, not while entering or returning to the tray. The report lists accepted/rejected frames and timing.
+- **No blind movement or automatic placement:** a valid calibration still needs at least two agreeing game-shadow frames AND an unchanged board and returned piece.
 
 ## Two-stage workflow
 
@@ -27,8 +33,15 @@ Copy these project files into your existing GitHub Desktop clone, preserving `.g
 
 ```sh
 sh tests/CompileRecognitionSmoke.sh
-kotlinc app/src/main/java/com/example/rockblockbot/TouchService.kt tests/TouchServiceStubs.kt tests/TouchGraphicsStubs.kt tests/TouchEventStubs.kt tests/SingleStrokeTest.kt -include-runtime -d /tmp/one-stroke.jar
+kotlinc app/src/main/java/com/example/rockblockbot/TouchService.kt app/src/main/java/com/example/rockblockbot/ProbeTiming.kt tests/TouchServiceStubs.kt tests/TouchGraphicsStubs.kt tests/TouchEventStubs.kt tests/SingleStrokeTest.kt -include-runtime -d /tmp/one-stroke.jar
 java -jar /tmp/one-stroke.jar
 ```
 
 **Full Android compilation and the game's real snapping behavior must be tested on the phone.** Local tests validate Kotlin touch calls and geometry logic, not platform gesture delivery or the game's visual response.
+
+## New local timing test
+
+```sh
+kotlinc app/src/main/java/com/example/rockblockbot/ProbeTiming.kt tests/ProbeTimingTest.kt -include-runtime -d /tmp/probe-timing.jar
+java -jar /tmp/probe-timing.jar
+```
