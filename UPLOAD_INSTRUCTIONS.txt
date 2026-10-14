@@ -1,28 +1,8 @@
-ROCKBLOCKBOT - PC UPLOAD GUIDE
+Update the existing repository https://github.com/ArcticMonkeyz/Automated_Blockbot
 
-PART 1 - Upload the Android project
-1. Extract this ZIP on your PC.
-2. Open https://github.com/ArcticMonkeyz/Automated_Blockbot
-3. Click Add file > Upload files (or the upload link if the repo is empty).
-4. Drag these items from the extracted folder onto the upload page:
-   app (the whole folder), build.gradle.kts, settings.gradle.kts, README.md
-   Do not drag UPLOAD_INSTRUCTIONS.txt or WORKFLOW_COPY_THIS.txt.
-5. Check that app/src/main/AndroidManifest.xml and app/src/main/java/...
-   appear with their paths, then Commit changes.
+1. Open the extracted RockBlockBot-v2 folder.
+2. Upload its `app` directory and root `README.md` to the existing repository, REPLACING existing files at the same paths. GitHub's normal Upload files interface may reject overwriting existing paths; the easiest reliable method is GitHub Desktop or Git CLI. Alternatively, use GitHub web editor to update individual files.
+3. Keep your existing .github/workflows/build-apk.yml (it already built v1).
+4. Commit to main and inspect Actions.
 
-PART 2 - Add the GitHub Actions workflow
-1. In your repo click Add file > Create new file.
-2. In the filename field enter EXACTLY:
-   .github/workflows/build-apk.yml
-   GitHub creates those folders automatically.
-3. Open WORKFLOW_COPY_THIS.txt in Notepad, copy all its contents,
-   and paste them into GitHub's editor.
-4. Click Commit changes.
-
-PART 3 - Get the APK
-1. Open the Actions tab and click Build RockBlockBot APK.
-2. Wait for a green successful build. If red, share the error.
-3. Open the successful run, download RockBlockBot-debug-APK under Artifacts.
-4. Extract that artifact ZIP to find the .apk, then install on Android.
-
-NOTE: This is a manual-entry solver prototype, NOT yet an automatic game player.
+This package intentionally contains NO hidden .github folder.
