@@ -1,11 +1,8 @@
-Rock Block Bot v3.3
-
-1. Extract ZIP.
-2. In GitHub Desktop -> Repository -> Show in Explorer, open the existing cloned repo.
-3. Copy extracted files into that repo, replacing matching files. Do not delete .git or .github.
-4. Commit and Push origin.
-5. Wait for Build Debug APK on GitHub Actions, then install the APK.
-6. Share a single app: Rock Block Saga. Keep X=84, Y=484.
-7. With three real pieces, do not use RESUME. Tap PREVIEW and check shape counts.
-8. Only attempt NEXT MOVE when every visible piece has been identified correctly.
-9. If any piece is missed, STOP and send game report; do not force RESUME.
+Rock Block Bot v3.4
+1. Extract all files.
+2. Open GitHub Desktop -> Repository -> Show in Explorer.
+3. Copy the extracted project files into that folder and replace existing ones. Do not delete .git or .github.
+4. GitHub Desktop -> commit "v3.4 horizontal-strip capture geometry fix" -> Push origin.
+5. GitHub Actions -> Build Debug APK -> install APK if build succeeds.
+6. Share a single app (Rock Block Saga); PREVIEW must show all actual piece cells. Never move a wrong preview.
+7. After NEXT MOVE, wait at least 7 seconds for verification before pressing STOP. Send preview and final report screenshots.

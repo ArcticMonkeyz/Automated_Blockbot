@@ -1,35 +1,34 @@
-# Rock Block Bot v3.3 — missing-piece recognition and safe RESUME
+# Rock Block Bot v3.4 — four-block strip capture geometry fix
 
-Fixes based on the game screenshot and game report showing 3 tray pieces physically visible but only 2/3 recognized in v3.2.
+This update is based on the three screenshots where the left purple tray piece was visibly **four** blocks (`####`) but the live preview read **three** (`###`), then dragged the real four-block piece farther right than the three-cell preview.
 
-## Diagnosis
+## Reproduced issue and fix
 
-Screenshot: Piece 1 is the red `###/..#` 4-cell piece; Piece 2 is a green `###/#..` 4-cell piece; Piece 3 is the yellow horizontal `##` 2-cell piece. Previous report showed Piece 1 NOT RECOGNIZED, so ordinary PREVIEW required all 3 and did nothing. The RESUME 1/2 button bypassed that requirement and planned using only two detected shapes. That would be unsafe for survival planning.
+- The v3.3 detector inferred the horizontal strip count from its colored bounding width divided by its colored height. On a slightly vertically stretched capture, a 4×1 strip looked like 3 oversized cells.
+- We reproduced this with the provided screenshot `1000010910.png` after stretching only the purple tray area by +8%, +15% and +22%. **v3.3 read `###` (3); v3.4 reads `####` (4)** for each case, and also recognizes the correct 4-block strip at +30% stretch. Higher distortion can be rejected rather than guessed.
+- v3.4 counts dark vertical tile seams directly (alongside color coverage), with a bounded tile width. A fallback shape must fit the actual colored bounding box rather than ignore an extra tile-width segment.
+- A valid five-block purple strip on `1000010843.png` / `1000010845.png` is now recognized as `#####` instead of incorrectly `####`.
+- A false-positive detection from the non-game menu screenshot is now rejected.
+- Rechecked all 61 available historical screenshot PNGs: only the two legitimate 5-strip corrections and the menu false-positive changed; irregular pieces remain unchanged.
 
-## Changes
+## What did NOT change
 
-- Better multi-cell grid ranking: refuse low-precision dense pseudo-grid fits, favor pitches consistent with the measured piece bounds, and modestly relax the fallback threshold for otherwise well-fit irregular shapes.
-- Independent colored-pixel presence check for each tray slot. A physically visible but unrecognized piece cannot be treated as an empty/used slot via RESUME.
-- The report distinguishes `NOT RECOGNIZED (colored piece still visible)` from `NOT RECOGNIZED (empty/uncertain)`.
-- Full three-piece PREVIEW still requires 3 accurately identified shapes. RESUME is only for genuine partial trays (one or two physically remaining pieces).
-- Unchanged: compact floating controls, X/Y calibration, known green-L shape correction, solver heuristics, gesture timing, manual confirmation, and post-placement verification.
+- Global saved calibration X=84px, Y=484px (if that is your current setting); no automatic or cumulative offset migration in this version.
+- Green `###/#..` shape-specific (-1,-1) correction from v3.1; no new shape-specific correction is applied to the purple strip because the preview itself was already incorrect. Do not calibrate against a false preview.
+- Survival solver, drag timing, accessibility permissions, board-grid geometry, and compact floating controls remain unchanged.
+- PREVIEW / NEXT MOVE remain manual, with every real tray piece required to be recognized. RESUME may not skip a visible unknown piece.
+- Placement report now says PENDING during the gesture; if STOP is pressed before verification completes, it explicitly says INCOMPLETE instead of falsely suggesting no attempted placement.
 
-## Test results and limits
+## Test boundaries
 
-Offline Kotlin screenshot tests on provided 709×1536 screenshot `1000010905.png`:
-- Piece 1: `###/..#`, 4 cells
-- Piece 2: `###/#..`, 4 cells
-- Piece 3: `##`, 2 cells
-- Board: 6 occupied squares
+Host-JVM Kotlin/Java screenshot and calibration tests passed. The ZIP passes integrity checking; **the Android APK has NOT been compiled or tested locally**. Build with your existing GitHub Actions workflow, and verify the preview on your phone before any drag. The actual placement still needs on-device validation, especially for 2D shapes; do not assume recognition fixes calibrate all drag locations.
 
-Additional screenshots correctly identified horizontal 4, vertical 4/5, purple 4-cell zigzag, and horizontal 2. Comparison against 58 historical screenshots found no other changed shape footprints aside from removal of a low-confidence dense false fit; some unrecognized pieces remain deliberately unrecognized.
+## Install/test
 
-**Caveat:** The previous detector reads the red shape from the posted PNG but did not read the red shape in the on-device MediaProjection report. The revised detector is more tolerant, but this is NOT yet proof that the device capture difference is fixed. If the red piece still fails, STOP and send the newest report; do not use RESUME to bypass it.
+1. Extract this ZIP and copy the project files into your existing GitHub Desktop clone, replacing matching files. Leave `.git` and `.github` intact.
+2. Commit, push, and wait for GitHub Actions **Build Debug APK** to succeed. Install the new APK.
+3. Use **Share a single app → Rock Block Saga**. With three actual pieces, do NOT use RESUME.
+4. Tap PREVIEW. The displayed shape count and green highlighted cells must equal the physical blocks. For a four-block horizontal piece it MUST say `#### (4 blocks)` and show four green board cells. If it says `###`, STOP.
+5. Only then attempt ONE manual NEXT MOVE. Wait at least 7 seconds for post-release verification to finish, then STOP and send a screenshot of the game's final position and the **Last placement check** report.
 
-No complete Android APK build was run locally; build through existing GitHub Actions workflow and verify with a screenshot before dragging.
-
-## Install
-
-Extract ZIP; copy contents into the existing GitHub Desktop clone, replacing matching files; keep `.git` and `.github`. Commit and Push origin. Wait for Build Debug APK action to succeed, then install APK.
-
-Open Rock Block Saga through Android `Share a single app` capture. Leave existing X=84, Y=484 calibration unchanged. Tap PREVIEW and check the three pieces and all green preview cells. Do not use RESUME with three visible pieces. Do not use NEXT MOVE until the preview is correct.
+Do not press NEXT MOVE on a known wrong preview or try to compensate for a wrong piece count by changing X/Y.

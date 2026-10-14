@@ -176,12 +176,64 @@ object BoardRecognizer {
         return bonus.coerceAtMost(0.24)
     }
 
-    /**
-     * Read one-row/one-column strips from their high-confidence colored core.
-     * The bounding mask can be 10-15px taller than a tile due to highlights,
-     * shadows and antialiasing; measuring the full bounding height incorrectly
-     * turns a 4x1 strip (160x51px) into 3 oversized tiles.
-     * This path is independent of the footprint library.
+    /** Measure vertical seam valleys directly, independently of tile height.
+     * Captures can stretch the vertical dimension of a tray piece, so using
+     * bounding width / bounding height can mistake #### for ###.
+     */
+    private fun horizontalSeamCount(
+        image: Bitmap, zone: Zone, minX: Int, minY: Int,
+        boxW: Int, core: IntRange
+    ): Int? {
+        val first = zone.top + minY + core.first
+        val last = zone.top + minY + core.last
+        if (last-first < 23) return null
+        val y0 = first + (last-first) / 4
+        val y1 = last - (last-first) / 4
+        fun luminance(x: Int): Double {
+            if (x !in 0 until image.width) return 0.0
+            var sum = 0.0; var n = 0
+            for (y in y0..y1 step 3) {
+                val p = image.getPixel(x, y)
+                sum += (Color.red(p) * 0.30 + Color.green(p) * 0.59 + Color.blue(p) * 0.11)
+                n++
+            }
+            return if (n>0) sum/n else 0.0
+        }
+        var bestCount = 0
+        var bestContrast = 0.0
+        for (n in 2..6) {
+            val pitch = boxW.toDouble()/n
+            if (pitch !in 29.0..49.0) continue
+            var sum = 0.0
+            var minimum = Double.POSITIVE_INFINITY
+            for (k in 1 until n) {
+                val predictedX = (zone.left + minX + k*pitch).roundToInt()
+                // The colored-pixel bounding edge may be offset from the
+                // true seam by a few pixels. Find the local darkest line.
+                var strongest = 0.0
+                for (x in predictedX-3..predictedX+3) {
+                    if (x-7 < 0 || x+7 >= image.width) continue
+                    val center = (luminance(x-1)+luminance(x)+luminance(x+1))/3.0
+                    val sides = (luminance(x-7)+luminance(x+7))/2.0
+                    strongest = maxOf(strongest, sides-center)
+                }
+                sum += strongest
+                minimum = minOf(minimum, strongest)
+            }
+            // Real tile edges create dark vertical valleys at EVERY seam.
+            // False subdivisions of a solid tile generally do not.
+            if (minimum < 12.0) continue
+            val average = sum / (n-1)
+            if (average > bestContrast) {
+                bestContrast = average
+                bestCount = n
+            }
+        }
+        return bestCount.takeIf { it>0 }
+    }
+
+    /** Read one-row strips from their colored center and real seam geometry.
+     * Do not infer a strip count solely from its visual tile height.
      */
     private fun detectStraightStrip(
         image: Bitmap, zone: Zone, color: TileColor,
@@ -192,52 +244,48 @@ object BoardRecognizer {
             val peak = profile.maxOrNull() ?: return null
             if (peak < 14) return null
             val threshold = peak * 0.63
-            var bestStart = -1
-            var bestEnd = -1
-            var start = -1
-            for (i in 0..profile.size) {
-                val strong = i < profile.size && profile[i] >= threshold
-                if (strong && start < 0) start = i
-                if (!strong && start >= 0) {
-                    if (i - start > bestEnd - bestStart) {
-                        bestStart = start
-                        bestEnd = i
-                    }
-                    start = -1
+            var bestStart=-1; var bestEnd=-1; var start=-1
+            for(i in 0..profile.size) {
+                val strong=i<profile.size && profile[i]>=threshold
+                if(strong && start<0) start=i
+                if(!strong && start>=0) {
+                    if(i-start>bestEnd-bestStart) {bestStart=start;bestEnd=i}
+                    start=-1
                 }
             }
-            if (bestStart < 0 || bestEnd - bestStart !in 24..56) return null
-            val explained = (bestStart until bestEnd).sumOf { profile[it] }
-            // Irregular shapes have colored pixels outside the main stripe.
-            if (explained.toDouble() / pixelCount < 0.86) return null
+            if(bestStart<0 || bestEnd-bestStart !in 24..61) return null
+            val explained=(bestStart until bestEnd).sumOf {profile[it]}
+            if(explained.toDouble()/pixelCount<0.86) return null
             return bestStart until bestEnd
         }
-        // Only horizontal strips use this specialized detector. Our screenshot
-        // tests showed that vertical projections can underestimate tile width.
-        val core = coreBand(yProfile) ?: return null
-        val thickness = core.count()
-        if (boxW < thickness * 1.75) return null
-        val count = (boxW.toDouble() / thickness).roundToInt()
-        if (count !in 2..6 || abs(boxW.toDouble() / count - thickness) > thickness * 0.17)
-            return null
-        val pitch = boxW.toDouble() / count
-        val lanePixels = IntArray(count)
-        for (v in core) for (u in 0 until boxW) {
-            val pixel = image.getPixel(zone.left + minX + u, zone.top + minY + v)
-            if (matches(pixel, color)) {
-                val lane = (u / pitch).toInt().coerceIn(0, count - 1)
+        val core=coreBand(yProfile) ?: return null
+        val thickness=core.count()
+        if(boxW<thickness*1.75) return null
+        val fromSeams=horizontalSeamCount(image,zone,minX,minY,boxW,core)
+        val count=fromSeams ?: (boxW.toDouble()/thickness).roundToInt()
+        if(count !in 2..6) return null
+        val pitch=boxW.toDouble()/count
+        if(pitch !in 29.0..49.0) return null
+        // If the seams are not independently visible, require agreement
+        // between height and width. Otherwise prefer actual seam geometry.
+        if(fromSeams==null && abs(pitch-thickness)>thickness*.13) return null
+        val lanePixels=IntArray(count)
+        for(v in core) for(u in 0 until boxW) {
+            val pixel=image.getPixel(zone.left+minX+u,zone.top+minY+v)
+            if(matches(pixel,color)) {
+                val lane=(u/pitch).toInt().coerceIn(0,count-1)
                 lanePixels[lane]++
             }
         }
-        val minLane = thickness * pitch * 0.48
-        if (lanePixels.any { it < minLane }) return null
-        val rows = listOf("#".repeat(count))
+        val minLane=thickness*pitch*.40
+        if(lanePixels.any {it<minLane}) return null
+        val rows=listOf("#".repeat(count))
         return ObservedPiece(rows,
-            (zone.left + minX + pitch / 2).toFloat(),
-            (zone.top + minY + (core.first + core.last) / 2.0).toFloat(),
-            0, 0, pitch.roundToInt(),
-            (lanePixels.sum().toDouble() / pixelCount).coerceIn(0.0, 1.0),
-            rows.first() in knownFootprints, count, 1)
+            (zone.left+minX+pitch/2).toFloat(),
+            (zone.top+minY+(core.first+core.last)/2.0).toFloat(),
+            0,0,pitch.roundToInt(),
+            (lanePixels.sum().toDouble()/pixelCount).coerceIn(0.0,1.0),
+            rows.first() in knownFootprints,count,1)
     }
 
     private fun detectPiece(image:Bitmap,zone:Zone):ObservedPiece? {
@@ -428,6 +476,11 @@ object BoardRecognizer {
             val trimmed=nonEmpty.map { it.substring(left,right+1) }
             val n=trimmed.sumOf { it.count { ch->ch=='#' } }
             if(n !in 1..9) continue
+            // Do not explain a four-tile strip as three tiles by leaving a
+            // large sliver of the actual colored extent outside the grid.
+            // Check BOTH bounding axes before trusting a fallback pitch.
+            if(abs(cols*pitch-boxW) > maxOf(10.0,pitch*.26)) continue
+            if(abs(rows*pitch-boxH) > maxOf(12.0,pitch*.38)) continue
             val recall=covered.toDouble()/pixelCount
             val precision=covered.toDouble()/area.coerceAtLeast(1)
             val f1=2*recall*precision/(recall+precision).coerceAtLeast(0.00001)

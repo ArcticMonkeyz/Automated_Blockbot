@@ -429,6 +429,7 @@ class CaptureService : Service() {
         prepared = null
         shapeLabel?.text = "Moving one piece. Wait for verification."
         lastGestureOutcome = "Waiting for Android gesture result"
+        lastPlacementCheck = "PENDING: Drag started; awaiting settled post-release game frame."
         setStatus("Testing piece ${plan.move.pieceIndex+1} at row ${plan.move.row+1}, " +
             "col ${plan.move.col+1}; endpoint (${coords[2].toInt()}, ${coords[3].toInt()}).")
         val accepted = TouchService.current?.dragWithHold(coords[0],coords[1],coords[2],coords[3]) { success,detail ->
@@ -528,6 +529,11 @@ class CaptureService : Service() {
         setStatus(message)
     }
     override fun onDestroy() {
+        // If the user stops before the 6-second verification period completes,
+        // preserve that fact instead of saying no move was attempted.
+        if (inProgress) lastPlacementCheck =
+            "INCOMPLETE: Capture stopped before placement verification finished. " +
+            "Do not assume the drag succeeded."
         stopped=true
         captureFrozen=false
         removeMarker()

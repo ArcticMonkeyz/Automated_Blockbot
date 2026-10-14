@@ -1,0 +1,11 @@
+v3.4 offline host-JVM regression results (not an Android APK test)
+Original purple screenshot 1000010910.png: v3.3 #### (4), v3.4 #### (4)
+Synthetic purple region stretched vertically: +8%, +15%, +22%: v3.3 ### (3), v3.4 #### (4).
+Synthetic +30%: v3.3 NOT RECOGNIZED; v3.4 #### (4).
+Known five-piece purple screenshot 1000010843.png and 1000010845.png: v3.3 #### (4), v3.4 ##### (5).
+Real 1000010905.png: red ###/..# (4), green ###/#.. (4), yellow ## (2).
+Real 1000010866.png: yellow ###/#.. (4), purple #./##/.# (4), green #### (4).
+Real 1000010813.png: red #/#/#/#/# (5), blue #/#/#/# (4), purple ##/## (4).
+Real 1000010900.png: blue #./##/.# (4), two empty slots.
+61 historical PNG images checked; only legitimate 5-strip fixes and menu false-positive reject changed.
+Actual device capture geometry and final drag placement remain to be verified.
