@@ -213,16 +213,34 @@ class CaptureService : Service() {
                         try {
                             if (track != null) {
                                 val scan = ShadowTracker.inspect(w,h,{ x,y -> cropped.getPixel(x,y) },track)
+                                // Preserve the proven local search. Only if it fails, inspect
+                                // the whole board for a strongly supported displaced shadow.
+                                // The strict fallback is never a blind placement command.
+                                val global = if (scan.match == null && track.probeRow != null && track.probeCol != null)
+                                    ShadowTracker.inspect(w,h,{ x,y -> cropped.getPixel(x,y) },
+                                        track.copy(probeRow=null, probeCol=null)) else null
+                                val distant = global?.match?.takeIf { m ->
+                                    kotlin.math.abs(m.row-track.probeRow!!) <= 4 &&
+                                    kotlin.math.abs(m.col-track.probeCol!!) <= 4 &&
+                                    m.strength >= .85 && m.confidence >= .18 &&
+                                    m.litCells == track.cells.size
+                                }?.copy(fallback=true)
+                                val accepted = scan.match ?: distant
+                                val diagnostic = if (accepted?.fallback == true)
+                                    "STRICT GLOBAL FALLBACK: ${global?.diagnostic}; local: ${scan.diagnostic}"
+                                else if (scan.match == null && global != null)
+                                    "LOCAL REJECTED: ${scan.diagnostic}; global diagnostic only: ${global.diagnostic}"
+                                else scan.diagnostic
                                 handler.post {
                                     if (stopped || shadowTarget !== track) return@post
-                                    shadowSample=scan.match
-                                    shadowDiagnostic=scan.diagnostic
+                                    shadowSample=accepted
+                                    shadowDiagnostic=diagnostic
                                     shadowSampleAt=now
                                     shadowFrames++
                                     if (probePlan != null &&
                                         probeSampleWindow.includes(now - probeStartedAt)) {
-                                        if (scan.match != null) {
-                                            probeSamples.add(scan.match)
+                                        if (accepted != null) {
+                                            probeSamples.add(accepted)
                                             probeObserved++
                                         } else probeRejected++
                                     }
@@ -782,18 +800,22 @@ class CaptureService : Service() {
         val second=readings.getOrNull(1)?.second?.size ?: 0
         val observed=best?.second?.size ?: 0
         val sample=best?.second?.maxByOrNull {it.strength + it.confidence}
-        val confident=gestureOk && observed >= 2 && observed > second && sample != null
+        val confident=gestureOk && observed >= (if(sample?.fallback==true) 3 else 2) &&
+            observed > second && sample != null &&
+            // Do not combine inconsistent local and global measurements.
+            best?.second?.all { it.fallback == sample.fallback } == true
         lastShadowTracking=if(sample!=null)
             "Probe shadow ${sample.colorlessPosition()}, target row ${plan.move.row+1} " +
             "col ${plan.move.col+1} (delta ${sample.col-plan.move.col} columns, " +
             "${sample.row-plan.move.row} rows) in $observed frames; " +
             "other position samples=$second; strength ${"%.2f".format(Locale.US,sample.strength)}; " +
-            "$probeObserved candidate and $probeRejected rejected frames during dwell. " +
+            "$probeObserved candidate and $probeRejected rejected frames during dwell; " +
+            "strict global fallback=${sample.fallback}. " +
             "Fingerprint ${plan.observed.tileColor} ${plan.observed.signature}."
         else "No agreeing shadow during the board-entry dwell: " +
             "$probeObserved candidate frame(s), $probeRejected rejected; " +
             "sampling ${probeSampleWindow.fromMs}-${probeSampleWindow.toMs} ms. " +
-            "$shadowDiagnostic; probe expected r${plan.move.row+1} c${plan.move.col+1} " +
+            "$shadowDiagnostic; planned target r${plan.move.row+1} c${plan.move.col+1} " +
             "(safe-probe position recorded in Last touch path)."
         probeSamples.clear()
         // Resume ordinary recognition after the finger has returned toward tray.

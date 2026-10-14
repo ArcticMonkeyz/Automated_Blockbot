@@ -12,7 +12,7 @@ object ShadowTracker {
     data class Target(val occupied: Long, val cells: List<Cell>, val row: Int, val col: Int,
                       val color: String, val probeRow: Int? = null, val probeCol: Int? = null)
     data class Match(val row: Int, val col: Int, val strength: Double,
-                     val confidence: Double, val litCells: Int, val alternatives: Int)
+                     val confidence: Double, val litCells: Int, val alternatives: Int, val fallback: Boolean = false)
     data class Scan(val match: Match?, val diagnostic: String)
     private const val REF_W = 709f
     private const val REF_H = 1536f

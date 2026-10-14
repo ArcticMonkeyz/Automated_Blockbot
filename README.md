@@ -61,3 +61,14 @@ java -jar /tmp/probe-timing.jar
 - Rejection diagnostics include expected probe and runner-up candidate information.
 - Existing single-stroke final placement, solver, and piece recognition are unchanged.
 - Do not press NEXT MOVE if CAL DRAG reports NO CALIBRATION. An actual Android build and device validation are still required.
+
+## v4.4.7 strict displaced-shadow fallback (experimental)
+- Keeps the existing probe-local shadow detector as first choice.
+- If it fails, runs an independent whole-board scan for diagnostic evidence.
+- Accepts a displaced candidate only with full shape support, >=0.85 strength,
+  >=0.18 separation from alternatives, and <=4-cell displacement from probe.
+- Requires three agreeing frames for fallback (two for proven local path),
+  and refuses calibration if local/global sample modes disagree.
+- Existing placement mapping and single-stroke gestures are unchanged.
+- Do not press NEXT MOVE unless CAL DRAG reports CALIBRATED and piece returns.
+- Android APK compilation/on-device performance have not been verified here.

@@ -16,3 +16,5 @@ This version avoids cancelled continuation segment 2. It is NOT true live closed
 
 New: shadow detector reads the exposed translucent edges under lifted pieces.
 This passed a real purple held-drag screenshot test, but still needs phone validation.
+
+Version 4.4.7: strict displaced-shadow fallback. Keep previous APK available for rollback.
