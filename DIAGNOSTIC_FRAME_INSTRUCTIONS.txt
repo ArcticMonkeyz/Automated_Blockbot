@@ -1,0 +1,13 @@
+v4.4.8 diagnostic capture
+
+After PREVIEW -> CAL DRAG -> STOP, the app saves the exact sampled image privately at:
+files/calibration_diagnostics/latest_probe.png
+and detection notes at latest_probe.txt.
+
+To retrieve from an Android debug build using a connected computer with adb:
+adb exec-out run-as com.example.rockblockbot cat files/calibration_diagnostics/latest_probe.png > latest_probe.png
+adb exec-out run-as com.example.rockblockbot cat files/calibration_diagnostics/latest_probe.txt > latest_probe.txt
+
+If run-as is denied, verify that the installed APK is the debug build and the package id is com.example.rockblockbot.
+The screenshot can contain other on-screen content. Review it before sharing.
+No placement behavior or thresholds were intentionally changed in this diagnostic version.

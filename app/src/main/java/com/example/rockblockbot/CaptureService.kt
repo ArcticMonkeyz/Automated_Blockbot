@@ -24,6 +24,8 @@ import android.widget.LinearLayout
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.io.File
+import java.io.FileOutputStream
 import java.util.concurrent.Executors
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -95,6 +97,8 @@ class CaptureService : Service() {
     private var probeSampleWindow = ProbeTiming.Window(0L, 0L)
     private var probeObserved = 0
     private var probeRejected = 0
+    @Volatile private var diagnosticCaptured = false
+    private var diagnosticFrameNote = "No diagnostic frame captured"
     private data class LearnedGrip(val x: Float, val y: Float)
     private fun learnedGrip(piece: BoardRecognizer.ObservedPiece): LearnedGrip? {
         val key = PieceCalibration.key(piece.signature, piece.tileColor)
@@ -231,6 +235,29 @@ class CaptureService : Service() {
                                 else if (scan.match == null && global != null)
                                     "LOCAL REJECTED: ${scan.diagnostic}; global diagnostic only: ${global.diagnostic}"
                                 else scan.diagnostic
+                                // Save one EXACT analysis frame, not a later UI screenshot.
+                                // Debug builds can retrieve it with adb run-as (private app storage).
+                                val elapsed = now - probeStartedAt
+                                if (probePlan != null && !diagnosticCaptured &&
+                                    probeSampleWindow.includes(elapsed)) {
+                                    diagnosticCaptured = true
+                                    try {
+                                        val folder = File(filesDir, "calibration_diagnostics")
+                                        folder.mkdirs()
+                                        val png = File(folder, "latest_probe.png")
+                                        FileOutputStream(png).use { out ->
+                                            cropped.compress(Bitmap.CompressFormat.PNG, 100, out)
+                                        }
+                                        val note = "elapsedMs=$elapsed\nprobe=${track.probeRow},${track.probeCol}\n" +
+                                            "target=${track.row},${track.col} color=${track.color}\n" +
+                                            "local=${scan.diagnostic}\nglobal=${global?.diagnostic}\n" +
+                                            "accepted=${accepted?.row},${accepted?.col}\n"
+                                        File(folder,"latest_probe.txt").writeText(note)
+                                        diagnosticFrameNote = "Saved private diagnostic: calibration_diagnostics/latest_probe.png and latest_probe.txt"
+                                    } catch (e: Exception) {
+                                        diagnosticFrameNote = "Diagnostic save failed: ${e.javaClass.simpleName}: ${e.message}"
+                                    }
+                                }
                                 handler.post {
                                     if (stopped || shadowTarget !== track) return@post
                                     shadowSample=accepted
@@ -754,6 +781,8 @@ class CaptureService : Service() {
         probeSamples.clear()
         probeObserved=0
         probeRejected=0
+        diagnosticCaptured=false
+        diagnosticFrameNote="Waiting for probe dwell frame"
         probeStartedAt=SystemClock.elapsedRealtime()
         probeSampleWindow=ProbeTiming.observationWindow(
             coords[0],coords[1],coords[2],coords[3])
@@ -810,12 +839,12 @@ class CaptureService : Service() {
             "${sample.row-plan.move.row} rows) in $observed frames; " +
             "other position samples=$second; strength ${"%.2f".format(Locale.US,sample.strength)}; " +
             "$probeObserved candidate and $probeRejected rejected frames during dwell; " +
-            "strict global fallback=${sample.fallback}. " +
+            "strict global fallback=${sample.fallback}. $diagnosticFrameNote. " +
             "Fingerprint ${plan.observed.tileColor} ${plan.observed.signature}."
         else "No agreeing shadow during the board-entry dwell: " +
             "$probeObserved candidate frame(s), $probeRejected rejected; " +
             "sampling ${probeSampleWindow.fromMs}-${probeSampleWindow.toMs} ms. " +
-            "$shadowDiagnostic; planned target r${plan.move.row+1} c${plan.move.col+1} " +
+            "$shadowDiagnostic; $diagnosticFrameNote; planned target r${plan.move.row+1} c${plan.move.col+1} " +
             "(safe-probe position recorded in Last touch path)."
         probeSamples.clear()
         // Resume ordinary recognition after the finger has returned toward tray.
