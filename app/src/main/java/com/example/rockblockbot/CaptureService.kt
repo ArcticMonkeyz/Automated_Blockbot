@@ -177,12 +177,29 @@ class CaptureService : Service() {
         actions.addView(moveButton)
         actions.addView(Button(this).apply { text = "STOP"; setOnClickListener { stopSelf() } })
         panel.addView(actions)
-        panel.addView(Button(this).apply {
-            text = "RESUME 1/2 PIECES (only if already placed one or two)"
+        // Keep the board unobstructed: the former always-visible resume and
+        // calibration rows reached the first board row on this phone.
+        val optionsRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        optionsRow.addView(Button(this).apply {
+            text = "RESUME 1/2"
             textSize = 11f
             setOnClickListener { resumePartialTray() }
         })
-        val adjustments = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val adjustments = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            visibility = View.GONE
+        }
+        val calibrationToggle = Button(this).apply {
+            text = "SHOW X/Y"
+            textSize = 11f
+            setOnClickListener {
+                val opening = adjustments.visibility != View.VISIBLE
+                adjustments.visibility = if (opening) View.VISIBLE else View.GONE
+                text = if (opening) "HIDE X/Y" else "SHOW X/Y"
+            }
+        }
+        optionsRow.addView(calibrationToggle)
+        panel.addView(optionsRow)
         fun adjustButton(label: String, dx: Int, dy: Int) {
             adjustments.addView(Button(this).apply {
                 text = label
@@ -192,11 +209,15 @@ class CaptureService : Service() {
         adjustButton("X -",-20,0); adjustButton("X +",20,0)
         adjustButton("Y -",0,-20); adjustButton("Y +",0,20)
         panel.addView(adjustments)
-        offsetLabel = TextView(this).apply { setTextColor(0xFFFFFFFF.toInt()); textSize = 13f }
+        offsetLabel = TextView(this).apply {
+            setTextColor(0xFFFFFFFF.toInt())
+            textSize = 12f
+        }
         panel.addView(offsetLabel)
         shapeLabel = TextView(this).apply {
             setTextColor(0xFFFFFFFF.toInt())
-            textSize = 14f
+            textSize = 12f
+            maxLines = 3
             text = "Tap PREVIEW to inspect the detected shape."
         }
         panel.addView(shapeLabel)
@@ -206,7 +227,13 @@ class CaptureService : Service() {
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
             PixelFormat.TRANSLUCENT
-        ).apply { gravity = Gravity.TOP or Gravity.START; x = 8; y = 45 }
+        ).apply {
+            // At the very top of the usable window, below Android's system bar.
+            // The shortened panel ends well above the game's first board row.
+            gravity = Gravity.TOP or Gravity.START
+            x = 4
+            y = 0
+        }
         wm?.addView(panel,params)
         overlay = panel
     }
