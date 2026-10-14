@@ -1,0 +1,18 @@
+Offline recognition regression for v3.1 using the existing Kotlin/JVM android.graphics stub + Java ImageIO:
+
+1000010873.png (after red and green placement):
+  board 14 occupied, piece1/2 absent, piece3 #./##/.# (4)
+  v3.0 incorrectly recognized 0/3 due blue-colored sea/sky pixels.
+1000010872.png (after red placement):
+  board 10 occupied, piece2 ###/#.. (4), piece3 #./##/.# (4)
+  v3.0 reported piece2 as 9 blocks and omitted blue piece3.
+1000010861.png (initial board):
+  board 6 occupied, piece1 ###/#.. (4), piece2 #./##/.# (4), piece3 #### (4).
+1000010843.png: #### (4), vertical five-piece (5), ###/#.. (4).
+1000010844.png: ##### (5), vertical five-piece (5).
+1000010813.png: vertical 5 (5), vertical 4 (4), 2x2 (4).
+
+Regression comparison: tested 54 historical screenshots; 21 yielded game frames in
+both versions. Additional improved partial-tray recognition and preserved known
+shapes. The 54 images include captures not representing a visible game frame.
+Android device gesture placement has not been verified for v3.1.

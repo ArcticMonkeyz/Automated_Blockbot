@@ -236,6 +236,83 @@ object BoardRecognizer {
                 minY=minOf(minY,y);maxY=maxOf(maxY,y) }
         }
         if(pixelCount<500 || maxX<minX) return null
+        // The game sea/sky sometimes satisfies the BLUE classifier. Remove
+        // disconnected blue speckles and sky patches before measuring the
+        // physical block mask. Individual blue tiles may be separate components
+        // (due to their seams), so keep all substantial components, not just
+        // the biggest one.
+        if (color == TileColor.BLUE) {
+            val labels = IntArray(mask.size) { -1 }
+            val areas = ArrayList<Int>()
+            val queue = IntArray(mask.size)
+            for (i in mask.indices) {
+                if (!mask[i] || labels[i] >= 0) continue
+                val id = areas.size
+                var head=0;var tail=1;queue[0]=i;labels[i]=id
+                while (head<tail) {
+                    val q=queue[head++]
+                    val cy=q/zoneW; val cx=q%zoneW
+                    for (dy in -1..1) for(dx in -1..1) {
+                        if (dy==0 && dx==0) continue
+                        val nx=cx+dx;val ny=cy+dy
+                        if(nx !in 0 until zoneW || ny !in 0 until zoneH) continue
+                        val ni=ny*zoneW+nx
+                        if(mask[ni] && labels[ni]<0) {labels[ni]=id;queue[tail++]=ni}
+                    }
+                }
+                areas.add(tail)
+            }
+            val largest=areas.maxOrNull() ?: 0
+            val minArea=maxOf(120,(largest*0.20).toInt())
+            minX=zoneW;maxX=-1;minY=zoneH;maxY=-1;pixelCount=0
+            for (i in mask.indices) {
+                if (!mask[i]) continue
+                if (areas[labels[i]]<minArea) {mask[i]=false;continue}
+                val x=i%zoneW;val y=i/zoneW
+                pixelCount++;minX=minOf(minX,x);maxX=maxOf(maxX,x)
+                minY=minOf(minY,y);maxY=maxOf(maxY,y)
+            }
+            if(pixelCount<500 || maxX<minX) return null
+        }
+        // A handful of cyan pixels in the sea/sky background can be matched as
+        // BLUE at the edge of the right tray zone. In a captured device frame
+        // two such pixels inflated an 80x122 zigzag into a 178x159 mask and
+        // caused recognition to reject the real remaining piece.
+        // Trim tiny extreme tails (0.2% each side) before estimating tile pitch.
+        // This is color/geometry-only, not a shape library lookup.
+        fun trimAxis(horizontal: Boolean, low: Int, high: Int): Pair<Int,Int> {
+            val profile = IntArray(if(horizontal)zoneW else zoneH)
+            for (y in 0 until zoneH) for (x in 0 until zoneW) {
+                if (mask[y*zoneW+x]) profile[if(horizontal)x else y]++
+            }
+            val allowance = (pixelCount * 0.002).toInt().coerceAtLeast(3)
+            var count=0; var start=low
+            for (i in low..high) {
+                count+=profile[i]
+                if (count>allowance) {start=i;break}
+            }
+            count=0;var end=high
+            for (i in high downTo low) {
+                count+=profile[i]
+                if (count>allowance) {end=i;break}
+            }
+            return start to end
+        }
+        val (trimMinX,trimMaxX)=trimAxis(true,minX,maxX)
+        val (trimMinY,trimMaxY)=trimAxis(false,minY,maxY)
+        // Remove outliers from both the bounding box and the later coverage
+        // denominator; otherwise two stray pixels can poison a valid shape.
+        if(trimMinX<=trimMaxX && trimMinY<=trimMaxY) {
+            minX=trimMinX;maxX=trimMaxX;minY=trimMinY;maxY=trimMaxY
+            pixelCount=0
+            for(y in 0 until zoneH) for(x in 0 until zoneW) {
+                if (mask[y*zoneW+x] && (x !in minX..maxX || y !in minY..maxY)) {
+                    mask[y*zoneW+x]=false
+                }
+                if (mask[y*zoneW+x]) pixelCount++
+            }
+        }
+        if(pixelCount<500) return null
         val boxW=maxX-minX+1;val boxH=maxY-minY+1
         val xProfile=IntArray(boxW);val yProfile=IntArray(boxH)
         for(y in minY..maxY) for(x in minX..maxX) if(mask[y*zoneW+x]) {

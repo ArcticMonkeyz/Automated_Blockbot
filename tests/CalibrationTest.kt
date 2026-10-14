@@ -22,5 +22,15 @@ fun main() {
     fun correct(current:Int, observedDelta:Int, cellPx:Int)=current-observedDelta*cellPx
     require(correct(0,-1,dx)==84)
     require(correct(400,-1,dy)==486)
-    println("PASS: on 1080x2400: X=$migratedX, Y=$migratedY, one-grid-cell shift = $dx x $dy px")
+    // v3.0 red horizontal #### placed correctly with the global calibration.
+    // The observed green ###/#.. landed +1 column,+1 row at that setting.
+    // Its correction must NOT alter any other shape's effective offsets.
+    require(PlacementGeometry.shapeCorrectionCells("###/#..") == (-1 to -1))
+    require(PlacementGeometry.shapeCorrectionCells("####") == (0 to 0))
+    require(PlacementGeometry.shapeCorrectionCells("#./##/.#") == (0 to 0))
+    val (greenBiasX,greenBiasY)=PlacementGeometry.shapeCorrectionCells("###/#..")
+    val effectiveGreenX=84+greenBiasX*dx
+    val effectiveGreenY=484+greenBiasY*dy
+    require(effectiveGreenX==0 && effectiveGreenY==398)
+    println("PASS: horizontal calibration X=$migratedX Y=$migratedY; green L effective X=$effectiveGreenX Y=$effectiveGreenY")
 }

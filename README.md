@@ -1,39 +1,41 @@
-# Rock Block Bot v3.0 — one-cell placement calibration test
+# Rock Block Bot v3.1 — shape-aware release and blue-piece recognition
 
-Experimental Android assistant for Rock Block Saga. Every placement requires manual PREVIEW, then NEXT MOVE confirmation. **No unattended gameplay.** The survival-focused solver and v2.9 independent tile recognition are unchanged.
+Android source project for Rock Block Saga. Each move requires **PREVIEW**, a visual shape check, and **NEXT MOVE**. No unattended gameplay. Survival-focused solver and v2.9 direct tray-geometry recognition remain enabled.
 
-## Why this version exists
+## Confirmed v3.0 problem and v3.1 fix
 
-In the Pixel 7 Pro screenshots, v2.9 correctly identified and picked up the green four-block horizontal strip. Its preview showed the destination at row 2, columns 2–5 (1-based), but the resulting placement was near row 1, columns 1–4. The user confirmed the piece was placed (not merely hovering). This is a **single observed displacement**, not proof all pieces have the exact same drag bias.
+The user tested two moves on Pixel 7 Pro:
 
-## v3.0 corrections
+- The horizontal red **`####`** piece landed at its intended preview position using global calibration **X=84, Y=484**.
+- The green L **`###/#..`** piece was recognized and picked up correctly but landed **one column right and one row down** of its preview. v3.0's saved report confirmed the +1,+1 displacement and suggested effective X=0,Y=400 for a subsequent test of that shape.
 
-1. **Shift the finger-release calibration one full displayed board cell right and one down.** The pickup coordinate, previewed cells, gesture duration, and board solver are unchanged. The correction is computed from the Android full-screen display dimensions, not a hardcoded 84/86 px. On a 1080 x 2400 display, old X=0/Y=400 becomes approximately **X=84/Y=486**. This directly compensates for the one-cell left/up error observed in v2.9. It is an *initial test calibration*, not a guaranteed placement fix.
-2. **One-time migration of existing saved offsets.** The app automatically applies the +1/+1 cell correction once when first run as v3.0, including after updating over v2.9. It will NOT apply it again on future starts. Updated offsets persist, and X/Y +/- buttons still adjust in 20px steps. The Y range is expanded from the old +400 ceiling to +900, so the correction is actually possible.
-3. **Better post-release verification.** The bot requires a newly captured, settled game frame after releasing the piece. It waits up to 6 seconds; it stops rather than trying again when the result isn't verified. If it detects a simple displaced placement, the status proposes next-test offsets without silently applying them.
-4. **Keep a readable error after STOP.** Main report now includes a separate "Last placement check" line, so stopping the service does not overwrite the result of the prior move.
-5. **Resume partial trays explicitly.** If an earlier test already used one or two of the three pieces, use `RESUME 1/2 PIECES` before PREVIEW. This requires a stable detection of 1 or 2 pieces and your visual confirmation that *no additional tray piece is missing due to recognition errors*. Don't use it when all three pieces are actually present.
+**Do not change the global calibration.** v3.1 retains the device's existing global X/Y values for red horizontal and every other shape. Only the *observed green `###/#..` footprint* receives an extra **-1 column, -1 row** endpoint correction in screen-scaled cell pixels. On the observed device, its effective release offset is approximately X=0,Y=398 instead of 84,484; this is a controlled next-test hypothesis, **not** a confirmed physical placement yet. The pickup coordinate, drag timing, preview cells, and survival solver are unchanged.
 
-## Installation via GitHub Desktop
+The exact-footprint correction deliberately does **not** affect differently oriented L pieces or unknown irregular shapes. A per-shape verification error will still stop the session; the report now includes the **effective** rather than just global suggested offset.
 
-1. Extract the ZIP on your computer.
-2. In GitHub Desktop, choose `Repository -> Show in Explorer` for `ArcticMonkeyz/Automated_Blockbot`.
-3. Copy extracted project files into the existing cloned repo, replacing matching files. **Keep .git and .github intact.**
-4. Commit `Blockbot v3.0 placement alignment calibration` and click `Push origin`.
-5. Wait for the existing GitHub Actions workflow to build the Android debug APK; install the resulting APK over the existing version (same app package, so calibration migrates).
+## Remaining blue zigzag recognition
 
-## First device test
+The v3.0 report after the green L incorrectly said `recognized 0/3 pieces` while a blue `#./##/.#` piece was visibly still in the tray. Reproduced against screenshot `1000010873.png` with offline Kotlin recognition: the algorithm matched blue-tinted sky/sea background and expanded the piece's bounding rectangle.
 
-1. Open game. Choose `Share a single app -> Rock Block Saga` when starting screen recognition.
-2. Confirm overlay displays approximately `X 84px, Y 486px` on a 1080 x 2400 display (actual values depend on Android's reported display size). **Do not manually set back to X 0/Y 400.**
-3. If your game still shows only two unused tray pieces from the earlier green placement, tap `RESUME 1/2 PIECES` first. If all three are present, don't tap it.
-4. Tap PREVIEW and check the number of blocks, green destination cells, and blue pickup ring. Do **not** move if any shape is wrong.
-5. Tap NEXT MOVE **once**. Wait for the overlay to finish verification. Screenshot the landed piece. If the app reports UNVERIFIED, STOP; do not attempt another move that session.
-6. After STOP, send both the game screenshot and the Blockbot "Latest game report", including "Last placement check". Avoid manual offset changes until the actual displacement is confirmed.
+v3.1 rejects tiny disconnected patches of blue color and trims extreme color-mask tails before fitting the grid. The same screenshot now reports **Piece 3: `#./##/.#` (4 blocks)**; screenshot `1000010872.png` now reports both remaining pieces (`###/#..` and `#./##/.#`) instead of a distorted nine-block shape.
 
-## Offline checks and limitations
+## Install/update via GitHub Desktop
 
-- `tests/CalibrationTest.kt`: Kotlin/JVM math check for a 1080x2400 display. One-cell correction = X +84, Y +86 px. Old 0/+400 -> 84/+486.
-- v2.9 tile-recognition regression examples are retained in `tests/recognition_regression.txt`, including all three correct shapes in the user's latest screenshots.
-- The Android APK has **not** been compiled or physically tested in this environment. The GitHub Actions build is still required. Placement behavior after the calibration change is unverified until the next on-phone test.
-- This game-specific recognizer, coordinate reference and migration assume the same orientation/display settings as the reported Pixel 7 Pro run. If the game responds differently to a new piece type or screen layout, verification should block the next move and guide another calibration test.
+1. Extract this ZIP.
+2. Open `ArcticMonkeyz/Automated_Blockbot` using GitHub Desktop → Repository → Show in Explorer.
+3. Copy extracted project files into the existing repository and replace matching files. **Preserve the existing `.git` and `.github` folders.**
+4. Commit `Blockbot v3.1 shape-specific release + blue recognition`, then **Push origin**.
+5. When GitHub Actions finishes, download/install its debug APK over the current app. Keep app data to preserve calibration and the v3.0 one-time migration flag.
+
+## Device test
+
+1. Use **Share a single app → Rock Block Saga**.
+2. The global calibration should still show **X 84, Y 484** or the same saved values as in v3.0. **Do not reset them**. The preview text now includes the shape-specific correction; for `###/#..` it shows `(-1,-1)` cells.
+3. If a new game has all three pieces, use PREVIEW directly. If the existing game has just the blue piece left, first use **RESUME 1/2 PIECES** after a stable screenshot, verify that the blue piece is recognized, then PREVIEW. Note: this blue piece has **not** yet had its physical landing calibrated. You may alternatively start a fresh game to test the corrected green L when it appears.
+4. Check each preview's shape and location before NEXT MOVE. Test only **one** placement at a time, wait for VERIFIED/UNVERIFIED, and send both landing screenshot and saved report after STOP. No automatic retries.
+
+## Offline tests
+
+- `tests/CalibrationTest.kt`: pure Kotlin/JVM test for horizontal/green L offsets at reference 1080×2400 resolution and unchanged treatment of the blue zigzag.
+- `tests/recognition_v31.txt`: screenshot regression results including `1000010873.png` (blue restored), `1000010872.png` (two remaining pieces), and earlier straight/irregular shapes.
+- The project ZIP was tested for ZIP integrity. **This is not an Android APK**; no on-device placement success is claimed for v3.1 until tested.

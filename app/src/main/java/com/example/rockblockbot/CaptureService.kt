@@ -240,11 +240,14 @@ class CaptureService : Service() {
         // right-hand block of an irregular piece and shift its placement.
         val fromX = plan.observed.gripX * sx
         val fromY = plan.observed.gripY * sy
-        val toX = (163f + (plan.move.col + plan.observed.gripCol)*55f) * sx + xOffset
+        val (biasCol, biasRow) = PlacementGeometry.shapeCorrectionCells(plan.observed.signature)
+        val toX = (163f + (plan.move.col + plan.observed.gripCol)*55f) * sx +
+            xOffset + biasCol * PlacementGeometry.cellWidthPx(screen.x)
         // The legacy +400 calibration was one row short with a leftmost-tile
         // grip. Version 3.0 migrates the saved X/Y endpoint bias once; the
         // board-preview geometry remains untouched.
-        val toY = (454f + (plan.move.row + plan.observed.gripRow)*55f) * sy + yOffset
+        val toY = (454f + (plan.move.row + plan.observed.gripRow)*55f) * sy +
+            yOffset + biasRow * PlacementGeometry.cellHeightPx(screen.y)
         return floatArrayOf(fromX,fromY,toX,toY)
     }
 
@@ -252,7 +255,8 @@ class CaptureService : Service() {
         val plan = prepared ?: return
         shapeLabel?.text = "Piece ${plan.move.pieceIndex+1}: ${plan.observed.signature} " +
             "(${plan.observed.count} blocks); pickup tile: " +
-            "row ${plan.observed.gripRow+1}, col ${plan.observed.gripCol+1}. Check shape!"
+            "row ${plan.observed.gripRow+1}, col ${plan.observed.gripCol+1}. " +
+            "Shape correction: ${PlacementGeometry.shapeCorrectionCells(plan.observed.signature)} cells. Check shape!"
         val screen = screenSize()
         val coords = gestureCoords(plan)
         if (marker == null) {
@@ -342,7 +346,8 @@ class CaptureService : Service() {
                     moveButton?.isEnabled = true
                     setStatus("PREVIEW only: piece ${move.pieceIndex+1}, row ${move.row+1}, col ${move.col+1}. " +
                         "${piece.normalized.size} green cells = full detected shape; blue = pickup tile; red = release. " +
-                        "If count/shape differs from the real piece, STOP. Calibration X=$xOffset Y=$yOffset.")
+                        "If count/shape differs from the real piece, STOP. Calibration X=$xOffset Y=$yOffset. " +
+                        "Shape adjustment ${PlacementGeometry.shapeCorrectionCells(plan.observed.signature)} cells.")
                 }
             } catch (e: Exception) {
                 handler.post {
@@ -463,10 +468,14 @@ class CaptureService : Service() {
             }
             if (valid && shifted == actualAdded && (dx != 0 || dy != 0)) {
                 val screen = screenSize()
-                val suggestedX = xOffset - dx * PlacementGeometry.cellWidthPx(screen.x)
-                val suggestedY = yOffset - dy * PlacementGeometry.cellHeightPx(screen.y)
-                return "Piece landed ${dx} columns, ${dy} rows from preview. " +
-                    "Suggested next-test offsets: X=$suggestedX, Y=$suggestedY (not applied)."
+                val (biasCol,biasRow) = PlacementGeometry.shapeCorrectionCells(plan.observed.signature)
+                val effectiveX = xOffset + biasCol*PlacementGeometry.cellWidthPx(screen.x)
+                val effectiveY = yOffset + biasRow*PlacementGeometry.cellHeightPx(screen.y)
+                val suggestedX = effectiveX - dx * PlacementGeometry.cellWidthPx(screen.x)
+                val suggestedY = effectiveY - dy * PlacementGeometry.cellHeightPx(screen.y)
+                return "Shape ${plan.observed.signature} landed ${dx} columns, ${dy} rows " +
+                    "from preview. Current effective X=$effectiveX Y=$effectiveY. " +
+                    "Suggested next-test effective X=$suggestedX Y=$suggestedY (not applied)."
             }
         }
         return "New cells differ from preview and are not a simple translation."
