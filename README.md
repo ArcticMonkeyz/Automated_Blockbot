@@ -1,3 +1,13 @@
+# Rock Block Bot v3.1.1 - Android compilation hotfix
+
+This is v3.1 with the Kotlin build failure corrected. In CaptureService.kt, the PREVIEW status line referenced an undefined variable `plan` (GitHub Actions `:app:compileDebugKotlin` at line 350). That line now uses the properly scoped `observed` variable created from the selected piece. No movement, recognition, strategy, or calibration behavior was changed.
+
+**Install:** extract this ZIP into your existing Automated_Blockbot repository, replacing matching files while preserving `.git` and `.github`; commit and push. GitHub Actions will compile and produce the APK. Keep app data when installing to preserve X/Y calibration.
+
+**Verification:** The calibration Kotlin/JVM test was run. An Android build still needs to run in GitHub Actions, since the local environment lacks the Android SDK.
+
+---
+
 # Rock Block Bot v3.1 — shape-aware release and blue-piece recognition
 
 Android source project for Rock Block Saga. Each move requires **PREVIEW**, a visual shape check, and **NEXT MOVE**. No unattended gameplay. Survival-focused solver and v2.9 direct tray-geometry recognition remain enabled.

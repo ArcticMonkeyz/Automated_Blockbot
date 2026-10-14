@@ -338,7 +338,8 @@ class CaptureService : Service() {
                     }
                     val move = plan.moves.first()
                     val piece = available.first { it.first == move.pieceIndex }.second
-                    prepared = Prepared(frame,move,piece,frame.pieces[move.pieceIndex]!!,
+                    val observed = frame.pieces[move.pieceIndex]!!
+                    prepared = Prepared(frame,move,piece,observed,
                         Solver.placeAndClear(frame.board,piece,move.row,move.col),
                         SystemClock.elapsedRealtime())
                     captureFrozen = true
@@ -347,7 +348,7 @@ class CaptureService : Service() {
                     setStatus("PREVIEW only: piece ${move.pieceIndex+1}, row ${move.row+1}, col ${move.col+1}. " +
                         "${piece.normalized.size} green cells = full detected shape; blue = pickup tile; red = release. " +
                         "If count/shape differs from the real piece, STOP. Calibration X=$xOffset Y=$yOffset. " +
-                        "Shape adjustment ${PlacementGeometry.shapeCorrectionCells(plan.observed.signature)} cells.")
+                        "Shape adjustment ${PlacementGeometry.shapeCorrectionCells(observed.signature)} cells.")
                 }
             } catch (e: Exception) {
                 handler.post {
