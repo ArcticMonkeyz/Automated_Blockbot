@@ -1,0 +1,1 @@
+v4.4.12: from v4.4.4 directly; bypass experimental v4.4.5-v4.4.11. Placement and recognition code unchanged. New learned-grip preference namespace prevents use of stale measurements. Export Last Report ZIP is text only. Actual Android APK/build and phone placement are unverified.

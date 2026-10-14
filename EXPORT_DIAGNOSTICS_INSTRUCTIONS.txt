@@ -1,8 +1,0 @@
-RockBlockBot v4.4.11 — EXPORT DIAGNOSTICS
-
-Open app -> EXPORT DIAGNOSTICS (save ZIP to phone) -> Downloads -> Save.
-Upload the resulting ZIP to the chat.
-The saved first and second probe screenshots and text records refer to their
-corresponding visual analysis frames. Purple four-strip trials must confirm
-one-cell ghost movement across two positions before they can learn calibration.
-Never NEXT MOVE after NO CALIBRATION / UNVERIFIED.

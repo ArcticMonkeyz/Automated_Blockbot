@@ -1,5 +1,0 @@
-v4.4.11 / purple four-strip only
-- Shift the dual CAL DRAG endpoints left to keep the shadow out of the board's right edge when safe.
-- Accept a faint but distinct exposed purple end-preview fringe down to 0.19 coverage (0.22 measured in the new capture), never as evidence on its own.
-- Preserve all existing calibrations, other-shape detectors, return-to-tray checks and diagnostic ZIP export.
-- Live Android behavior requires another two-frame diagnostic test; no release is authorized if calibration remains uncertain.

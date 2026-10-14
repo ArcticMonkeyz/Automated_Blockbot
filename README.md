@@ -1,53 +1,99 @@
-# RockBlockBot v4.4.11 — purple fringe + leftward dual-probe regression fix
+# Rock Block Bot v4.4.13 — GUARDED v4.4.4 ROLLBACK
 
-**Experimental Android source project. This is NOT a prebuilt APK and is NOT proven on the phone yet.** Build with your existing Android/GitHub Actions workflow, install the resulting APK as an update without clearing app data, then run a supervised CAL DRAG. Do not run unattended.
+See `REPAIR_NOTES.md` for fixes, safety limits, and testing instructions.
 
-## Oct 14 second-capture follow-up (v4.4.11)
+---
 
-The v4.4.10 dual-probe diagnostic shows the raised purple four-strip **shifted one column** between the two screen captures. Yet the second endpoint pushed the piece onto the right edge, obscuring the translucent placement preview completely. The first endpoint had a narrow purple preview fringe measuring about 0.22 of the sample area, below the previous 0.28 cutoff. These are **visibility problems**, not proof that release calibration is correct.
+# Historical v4.4.12 rollback notes
 
-For purple horizontal four-strips only, v4.4.11 starts the two-stop probe one *legal* cell to the left of the older preferred anchor and then returns to that anchor for the second dwell (when both are legal). If the left cell is blocked, it prefers a leftward second endpoint. The composite detector now recognizes the narrow fringe above 0.19, but still requires 3 opaque cells and the distinct end preview, board-occupancy exclusion, two separately captured probe locations that follow the exact cell shift, and successful return to tray. The solid lifted piece alone **never** authorizes calibration.
+**Rollback to the last phone-tested code path that correctly placed three blocks.**
+This release begins from the archived v4.4.4 source, not 4.4.11.
 
-**Not yet validated on a phone.** On a different board the safer leftward probe might be unavailable. If two real preview fringes are not visible, calibration will still refuse to save; export both diagnostics instead. Do not use NEXT MOVE following NO CALIBRATION.
+- The full BoardRecognizer, ShadowTracker, TouchService, ProbeTiming, Solver,
+  PlacementGeometry, GripMapping and other game-placement logic is **byte-for-byte
+  the v4.4.4 implementation**. No dual-probe or experimental purple fallbacks.
+- Android versionCode increased to **33** so it can update the existing app.
+- Learned finger-to-shadow calibrations use a clean, separate namespace.
+  Old v4.4.5–4.4.11 learned grips are ignored, while global/tall/manual
+  per-piece calibration settings remain unchanged. **You must recalibrate each
+  shape/color before NEXT MOVE becomes available.**
+- An **EXPORT LAST REPORT ZIP** button exports the current text status without
+  touching the live image/gesture pipeline. This is text-only, not a screenshot.
+- Purple long-strip calibration remains **unresolved**. Do not authorize NEXT
+  MOVE for it unless CAL DRAG completes and the preview coordinates look right.
+- Never uninstall/clear storage; install the new debug APK over the existing app.
 
-## What changed
+## Quick validation sequence
 
-The user's Oct 14 v4.4.9 diagnostic contains a 4-cell horizontal purple piece that hides three translucent placement-preview cells. The legacy shadow scanner saw only 1/4 and correctly refused to guess. The new `OccludedPurpleShadow` detector combines **three newly raised opaque purple squares** with **one exposed translucent preview square at the end**. It excludes any cells known occupied in the baseline board, so the purple block already on the board cannot count as a moving part. The real diagnostic frame is checked in `tests/RealOccludedPurpleTest.kt` and yields shadow anchor **row 2, column 4** (1-based), whereas the old detector rejected it.
+1. On a new board, START recognition and PREVIEW. Confirm all 3 shapes and the
+   indicated green target placement cells match the actual board.
+2. CAL DRAG a shape **that was previously successful**, watch it return to tray,
+   and verify `CALIBRATED`. Then PREVIEW again. With the target correct, try
+   **one supervised NEXT MOVE**, confirm successful placement on the board.
+3. Repeat for other previously working shapes only after the first succeeds.
+4. For the purple strip, stop at CAL DRAG if `NO CALIBRATION` and export the
+   text report plus a phone screenshot; do not attempt a blind NEXT MOVE.
+5. If placements fail even for previously working shapes, STOP; do not use
+   later versions' correction paths or repeatedly revise offsets.
 
-**A screenshot by itself is insufficient to authorize placement.** Only the purple horizontal four-strip uses a new, one-stroke two-stop probe. The finger dwells at one safe spot, shifts exactly one board cell to another legal spot, dwells again and returns to the tray before releasing. The preview must move by the corresponding exact cell; at least two agreeing frames must occur at EACH stop; and the game board/tray must be verified unchanged afterward. Otherwise NO CALIBRATION is saved. If a safe second probe spot does not exist, CAL DRAG is blocked for this shape.
+**This rebuild is not yet tested on the user's phone.**
 
-The single-stroke placement approach and previous shape calibration remain unchanged for all **other** shapes and colors. Older calibration for the purple four-strip is intentionally **not trusted** until it passes the two-stop check. The existing EXPORT DIAGNOSTICS button now saves both observed frames (`latest_probe.png` / `latest_probe_b.png`) with matching `.txt` analyses, when a two-stop probe was performed. Only the first pair appears for other shapes.
+---
 
-## How to test (supervised, phone)
+# Rock Block Bot v4.4.4 — partially obscured game-shadow recognition
 
-1. Build a debug APK from this project using your existing GitHub repository/workflow. Install over the previous app, **do not uninstall or clear app data**.
-2. Open Rock Block Saga and start capture in RockBlockBot. Use **single-app screen sharing**, overlay and accessibility permissions.
-3. Tap **PREVIEW**; verify the tray piece, blue pickup tile and green placement cells are correct. If any mismatch, STOP.
-4. Tap **CAL DRAG** once and wait for the ~5.7 second single uninterrupted out-two-stops-back gesture plus confirmation. This is intended to return the piece to its tray, but an accidental placement is still possible.
-5. If the report says **CALIBRATED**, and the board and tray really are unchanged, you may review a new PREVIEW. Do **not** blindly tap NEXT MOVE; the final release is still open-loop and cannot be proven safe by offline screenshot tests.
-6. If the report says NO CALIBRATION or UNVERIFIED, **do not use NEXT MOVE**. Open the app and choose **EXPORT DIAGNOSTICS (save ZIP to phone)**, then upload that ZIP for analysis. If only one screenshot is present, mention whether the probe was interrupted.
+**Experimental hardware test. Do not use unattended.** This version addresses the repeated Android cancellation of **continued gesture segment 2** on the user's Pixel 7 Pro. The Android accessibility API supports continued gestures, but two live tests of this approach ended in cancellation and sometimes an unintended board placement. We therefore avoid continuation entirely for the first controlled alternative.
 
-## Host-side regression checks
+## Improvements over v4.4.3
 
-`sh tests/CompileRecognitionSmoke.sh`
+- **Exposed-edge shadow recognition:** the game's shadow is frequently hidden behind the solid raised piece. The previous 3×3 center-only scan missed the purple four-tile ghost in the user's real CAL DRAG screenshot. The new **9×9 per-cell fringe scan** runs when the high-confidence center scan fails. It recognizes thin translucent strips just outside the lifted blocks while rejecting single-cell or ambiguous color blobs.
+- **Directly relevant target comparison:** the probe entry remains computed from the currently planned green preview (with an approximate finger-to-piece lift estimate), and the report now explicitly gives the actual game's ghost location **versus the green target**. Their mismatch calibrates the next release; CAL DRAG itself is **not** supposed to land at the green target.
+- **Real-image verification:** regression tests recover the partially hidden purple shadow at row 1 / column 6 in the supplied during-drag screenshot. They detect no shadow in the supplied before and after screenshots. Existing five-color synthetic checks, tile recognizer, and single-stroke checks pass locally.
+- **Compact dock entirely above the 8×8 board:** short fixed-height PREVIEW, NEXT MOVE, CAL DRAG, STOP buttons. STOP no longer wraps vertically. INFO scrolls diagnostic details in a small capped area; CAL cycles GLOBAL, TALL and PIECE adjustments in one compact row. Both collapse before any gesture, keeping the placement-preview area visible.
+- **More stable shadow measurement:** the one-stroke CAL DRAG stays above the board longer (4200ms total), with a small 6px sweep for roughly 1.8 seconds of steady-game shadow visibility. Samples are collected only during the predicted board dwell, not while entering or returning to the tray. The report lists accepted/rejected frames and timing.
+- **No blind movement or automatic placement:** a valid calibration still needs at least two agreeing game-shadow frames AND an unchanged board and returned piece.
 
-`kotlinc app/src/main/java/com/example/rockblockbot/{ShadowTracker,OccludedPurpleShadow}.kt tests/{CellStub,RealOccludedPurpleTest}.kt -include-runtime -d /tmp/occlusion.jar`
+## Two-stage workflow
 
-`java -jar /tmp/occlusion.jar /path/to/your/latest_probe.png`
+1. Share **Rock Block Saga only** when granting MediaProjection. Enable overlay and accessibility permissions.
+2. Tap **PREVIEW**. Check all numbered cyan tile centers and the green target squares. The red crosshair shows an **approximate probe entry point derived from the green target** if the piece is not yet calibrated; it is **not a validated release point**.
+3. Tap **CAL DRAG** (not NEXT MOVE). A **single uninterrupted Android stroke** moves the piece into the board, oscillates within a few pixels while MediaProjection looks for its game-generated translucent shadow, then returns to the tray and releases. The result **may accidentally place** the piece; the app checks the actual board and tray afterward. Don't touch the game or press STOP during this probe.
+4. A calibration is stored **only when** at least two independent frames agree on a shadow position, the board is unchanged, and the piece visibly remains in the tray. The report displays `CALIBRATED` or `NO CALIBRATION`/`UNVERIFIED PROBE`. A failed or uncertain probe does not enable a move.
+5. With a successful probe, tap **PREVIEW** again. The red crosshair now shows the **measured release point**, which uses the game's own shadow position and the planned target (not the older per-piece guess). NEXT MOVE becomes available for that exact **shape+color and screen resolution**.
+6. NEXT MOVE performs a **single uninterrupted, calibrated swipe** and releases. The game board is verified after release. This avoids the cancelled *second* continued stroke.
 
-`kotlinc app/src/main/java/com/example/rockblockbot/{ShadowTracker,DualProbe,ProbeTiming}.kt tests/{CellStub,DualProbeTest}.kt -include-runtime -d /tmp/twostop.jar`
+## Safety and limitations
 
-`java -jar /tmp/twostop.jar`
+- This is **not yet live closed-loop control during NEXT MOVE**. Android's continued gestures consistently cancelled on the test device, so we use a calibration pass followed by one single-stroke placement. Alignment is **predicted from the earlier ghost**, not rechecked immediately before release.
+- A calibration probe is intended to return the piece to its tray, **but game snapping or an Android cancellation could place it unexpectedly**. The app checks for that; inspect the board before retrying.
+- The fringe scan can recognize partly hidden shadows, but may still reject one if occluded or ambiguous. The probe then refuses to save calibration. No blind move is enabled.
+- One shape+color calibration is used only at the same display resolution. Other shapes require their own successful probe.
+- No autonomous repeats. PREVIEW and NEXT MOVE still require the user's explicit confirmation every time.
 
-`kotlinc app/src/main/java/com/example/rockblockbot/{TouchService,ShadowTracker,DualProbe,ProbeTiming}.kt tests/{CellStub,TouchServiceStubs,TouchGraphicsStubs,TouchEventStubs,SingleStrokeTest}.kt -include-runtime -d /tmp/touch.jar`
+## Build
 
-`java -jar /tmp/touch.jar`
+Copy these project files into your existing GitHub Desktop clone, preserving `.git` and `.github`; commit and push to trigger your existing **Build debug APK** workflow. Install the debug APK over the existing app.
 
-All listed host tests passed here. **Android Gradle APK compilation and on-device calibration performance have not been performed** in this environment.
+## Local checks
 
-### Limits
+```sh
+sh tests/CompileRecognitionSmoke.sh
+kotlinc app/src/main/java/com/example/rockblockbot/TouchService.kt app/src/main/java/com/example/rockblockbot/ProbeTiming.kt tests/TouchServiceStubs.kt tests/TouchGraphicsStubs.kt tests/TouchEventStubs.kt tests/SingleStrokeTest.kt -include-runtime -d /tmp/one-stroke.jar
+java -jar /tmp/one-stroke.jar
+```
 
-- Special occlusion reconstruction is implemented only for purple horizontal four-strips, where the supplied real frame supports it. Other shapes retain existing conservative detection.
-- A prospective ghost can be detected at row 2 / column 4 in the supplied frame, but the proposed two-stop geometry has not yet been verified on live game frames.
-- During an Android accessibility gesture, Android can cancel, and a game may snap or place a piece unexpectedly. Visual inspection remains essential.
-- A valid calibration does not prove every later MOVE succeeds. NEXT MOVE uses an independent single stroke and post-release verification.
+**Full Android compilation and the game's real snapping behavior must be tested on the phone.** Local tests validate Kotlin touch calls and geometry logic, not platform gesture delivery or the game's visual response.
+
+## Real-screen shadow test
+
+```sh
+kotlinc app/src/main/java/com/example/rockblockbot/ShadowTracker.kt tests/CellStub.kt tests/RealPurpleGhostTest.kt -include-runtime -d /tmp/realghost.jar
+java -jar /tmp/realghost.jar path/to/during-cal-drag.png path/to/before.png path/to/after.png
+```
+
+## Local timing test
+
+```sh
+kotlinc app/src/main/java/com/example/rockblockbot/ProbeTiming.kt tests/ProbeTimingTest.kt -include-runtime -d /tmp/probe-timing.jar
+java -jar /tmp/probe-timing.jar
+```
