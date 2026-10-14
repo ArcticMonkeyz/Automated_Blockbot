@@ -1,0 +1,13 @@
+Rock Block Bot v3.7 tall-piece direct-grip trial
+
+Observed v3.6: purple 5-high vertical piece `#/#/#/#/#` was recognized correctly. The red release marker was ~300 reference-image px below the final intended tile; Android completed the gesture, but the board gained 0 cells and the piece remained in tray. This strongly suggests finger travel was insufficient for this piece.
+
+New v3.7 release calculation:
+- tall geometry = height>=3 and height>width
+- short/horizontal pieces: toY = target grip tile pixelY + global Y offset + existing per-shape Y bias. No changes.
+- tall pieces: toY = target grip tile pixelY; existing X release is unchanged.
+- for global Y=484px, purple 1x5 release now 484 physical px upward vs v3.6. The red marker should move from well below the board onto the target bottom tile.
+- blue 2x3 zigzag also uses direct grip. This is unconfirmed experimentally.
+- global saved calibration unchanged, no silent retries.
+
+Verified with JVM-only CalibrationTest.kt and recognized prior test constraints.

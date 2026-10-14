@@ -1,32 +1,36 @@
-# Rock Block Bot v3.6 — color-separated full tray recognition
+# Rock Block Bot v3.7 — tall-piece direct-grip placement trial
 
-This is a **targeted recognition fix** after the yellow and green strips appeared side by side in the tray. The five-cell middle yellow strip was detected live as `####` (four cells), then the game actually placed **five** yellow cells. The app correctly reported `UNVERIFIED: Detected 5 new cells but expected 4.`
+This update addresses a **placement failure**, not the recognition system.
 
-## What's fixed
+## Evidence from v3.6 test
 
-- **No rigid per-slot cropping for oversized pieces.** The bot now uses narrow, nonoverlapping slot **seeds** to determine each tray piece's color, then widens its observation window only when substantial *matching-color* pixels appear beyond the old slot boundary. The photographed yellow strip extends outside the old middle-zone X=275..440 bounds, so its full length is included.
-- **Touching but different-colored pieces stay separate.** The wider regions overlap by design, but the detected mask is restricted to the color found in that slot's seed. Thin antialiasing fringes from neighboring colors are ignored when a region must be widened.
-- **Adjacent same-color pieces stay conservative.** The bot does not join them across the shared slot boundary. If a piece gets cut at a guarded boundary, it rejects the uncertain result rather than inventing a shorter shape.
-- **Preserve reliable paths.** The old per-slot scan remains active unless the same-color evidence indicates that a piece extends beyond it. The blue water background cannot trigger an automatic wide scan.
-- **Purple-only correction for five-wide strips.** A previous release-offset experiment was based on a *purple* `#####` strip landing one column to the right. The new screenshots show a *yellow* five-strip landing at its intended origin when it was misrecognized as four and therefore had no correction. Thus v3.6 applies that empirical -1 column correction to purple `#####` only, not to yellow or other colors. The global calibration remains unchanged.
+- At the start of the round, all three pieces were available: green horizontal 5, blue L-shaped 4 in the middle slot, and purple vertical 5. **The solver selected Piece 2 (blue) first.** That is intentional: the strategy can select any of the three, not just the leftmost piece.
+- Blue `###/#..` was moved to the upper-right board area. The following report counted 10 occupied board cells, compared with the original six; the blue placement appears to have succeeded.
+- The next preview correctly recognized Piece 3 (purple) as `#/#/#/#/#` (five vertical blocks). Its red finger-release crosshair was visibly below the board. Android completed the drag, but the settled report indicated **0 new cells** and the piece remained in its tray slot. It therefore did not place.
 
-## Offline tests
+## Change
 
-- `1000010922.png` (touching red/yellow/green): red `###/#..` 4, yellow `#####` 5, green `####` 4.
-- Checked **65 saved screenshot images** against v3.5's recognizer: 64 outputs identical. The one changed case is the touching-piece image's yellow five-strip, whose count stayed 5 but tile pitch estimation improved (33px → 39px). The captured app's live misreading of 4 is **not** reproduced by the saved screenshot; real-device confirmation is still required.
-- `tests/CalibrationTest.kt` confirms existing movement compensation remains, and yellow five-wide does **not** inherit the unverified purple-only correction.
-- Tested the modified `BoardRecognizer.kt` through a JVM screenshot harness with Android Bitmap stubs, **not** a full Android APK build.
+**For tall pieces (height >= 3 cells AND height > width):** compute the finger release by aligning the detected *pickup block* directly over its target tile on the board, without the +484px Y compensation used by shorter pieces. This moves the purple five-vertical preview release marker upward by 484 physical pixels on the tested setup. Short/horizontal pieces retain ALL prior calibration and shape-specific corrections. The saved global calibration remains X=84 Y=484.
 
-## Install and use
+This correction is geometry-driven, not a special-case piece-library entry. It also affects other taller-than-wide pieces, which must be tested separately. It is an **experimental placement fix**, not proof of accurate snapping; if a tall piece lands incorrectly, the bot stops rather than retrying.
 
-1. Unzip and copy project files over matching files in your existing GitHub Desktop checkout; **do not remove `.git` or `.github`**.
-2. Commit and push; use GitHub Actions **Build Debug APK** to create and install the new APK.
-3. Select **Share a single app → Rock Block Saga**. Leave the saved calibration at **X=84, Y=484** unless a settled verification report proves otherwise.
-4. Start with three actual tray pieces. Tap **PREVIEW**; the count, highlighted cells, and blue pickup marker **must** match the real piece before pressing NEXT MOVE. If any piece is unrecognized, do **not** use RESUME to bypass it.
-5. After a single trial NEXT MOVE, wait for settled verification (at least 7 seconds), then send a screenshot of the final placement and the full **Last placement check** report.
+If verification sees 0 new board cells after a no-clear placement, the report now explicitly says `NO PLACEMENT` and warns the piece may have snapped back instead of suggesting the piece was recognized with an incorrect number of cells.
+
+## Offline checks
+
+- `tests/CalibrationTest.kt` passes with `kotlinc` and tests the new tall-piece release calculation, plus the original 4-wide, purple 5-wide, yellow 5-wide, and green L corrections.
+- Source package/ZIP verified. No Android SDK compilation in this environment; build in GitHub Actions.
+- `tests/tall_grip_v37.txt` records calculation and expected visual changes.
+
+## Install
+
+1. Unzip and copy project files into the existing GitHub Desktop checkout, overwriting matching files; preserve `.git` and `.github`.
+2. Commit, push, build **Debug APK** in GitHub Actions, and install the APK.
+3. Choose **Share a single app → Rock Block Saga**. Keep global calibration **X=84, Y=484**.
+4. With all three tray pieces visible, PREVIEW without RESUME. If the selected shape/count is correct, try one NEXT MOVE. Wait at least seven seconds, then inspect its final location and report.
+5. For a **purple five-vertical** test, the red release crosshair should now be much closer to/inside the board than in v3.6. If the red crosshair is clearly misaligned with the planned preview, or the actual piece has a different shape, **do not press NEXT MOVE**. Send the preview screenshot.
+6. If you test a movement, send both the preview, the settled board and the Last placement check report. Stop on `UNVERIFIED` or `NO PLACEMENT`.
 
 ## Still unresolved
 
-- Color/shape detection is based on screenshot captures, not image/object recognition trained on the full game. It may reject or misread new visual variants.
-- The game has shown shape-dependent snapping. **Accurate recognition doesn't prove accurate placement** for all shapes. The app remains user-confirmed PREVIEW → NEXT MOVE, one gesture at a time, with verification and halt on mismatch. Do not assume unattended/autonomous play is safe.
-- No full Android SDK compilation performed in the sandbox. GitHub Actions is the required APK build test.
+Correct release alignment for every piece type is not established. Game-side touch anchoring has varied with shape. The app stays in manual PREVIEW → NEXT MOVE mode and blocks subsequent movements when post-drag verification fails. Do not assume unattended play works.

@@ -273,8 +273,10 @@ class CaptureService : Service() {
         // The legacy +400 calibration was one row short with a leftmost-tile
         // grip. Version 3.0 migrates the saved X/Y endpoint bias once; the
         // board-preview geometry remains untouched.
-        val toY = (454f + (plan.move.row + plan.observed.gripRow)*55f) * sy +
-            yOffset + biasRow * PlacementGeometry.cellHeightPx(screen.y)
+        val effectiveY = PlacementGeometry.effectiveYOffsetPx(
+            plan.piece.height, plan.piece.width, yOffset, biasRow,
+            PlacementGeometry.cellHeightPx(screen.y))
+        val toY = (454f + (plan.move.row + plan.observed.gripRow)*55f) * sy + effectiveY
         return floatArrayOf(fromX,fromY,toX,toY)
     }
 
@@ -283,7 +285,9 @@ class CaptureService : Service() {
         shapeLabel?.text = "Piece ${plan.move.pieceIndex+1}: ${plan.observed.signature} " +
             "(${plan.observed.count} blocks); pickup tile: " +
             "row ${plan.observed.gripRow+1}, col ${plan.observed.gripCol+1}. " +
-            "Shape correction: ${PlacementGeometry.shapeCorrectionCells(plan.observed.signature,plan.observed.tileColor)} cells. Check shape!"
+            "Shape correction: ${PlacementGeometry.shapeCorrectionCells(plan.observed.signature,plan.observed.tileColor)} cells; " +
+            (if (PlacementGeometry.directTallAnchor(plan.piece.height,plan.piece.width))
+                "TALL DIRECT GRIP (trial). " else "") + "Check shape!"
         val screen = screenSize()
         val coords = gestureCoords(plan)
         if (marker == null) {
@@ -385,7 +389,9 @@ class CaptureService : Service() {
                     setStatus("PREVIEW only: piece ${move.pieceIndex+1}, row ${move.row+1}, col ${move.col+1}. " +
                         "${piece.normalized.size} green cells = full detected shape; blue = pickup tile; red = release. " +
                         "If count/shape differs from the real piece, STOP. Calibration X=$xOffset Y=$yOffset. " +
-                        "Shape adjustment ${PlacementGeometry.shapeCorrectionCells(observed.signature,observed.tileColor)} cells.")
+                        "Shape adjustment ${PlacementGeometry.shapeCorrectionCells(observed.signature,observed.tileColor)} cells. " +
+                        (if (PlacementGeometry.directTallAnchor(piece.height,piece.width))
+                            "Tall direct-grip trial; verify placement. " else ""))
                 }
             } catch (e: Exception) {
                 handler.post {
@@ -493,6 +499,10 @@ class CaptureService : Service() {
         if (expectedCount != n || (original and predicted) != original) {
             return "Predicted placement includes a line clear; inspect board manually."
         }
+        if (actualCount == 0 && (original and actual) == original) {
+            return "NO PLACEMENT: 0 new board cells; the piece may have snapped back " +
+                "because the release missed the snap area. Do not retry blindly."
+        }
         if (actualCount != n || (original and actual) != original) {
             return "Detected $actualCount new cells but expected $n. Shape or board mismatch."
         }
@@ -509,7 +519,9 @@ class CaptureService : Service() {
                 val screen = screenSize()
                 val (biasCol,biasRow) = PlacementGeometry.shapeCorrectionCells(plan.observed.signature,plan.observed.tileColor)
                 val effectiveX = xOffset + biasCol*PlacementGeometry.cellWidthPx(screen.x)
-                val effectiveY = yOffset + biasRow*PlacementGeometry.cellHeightPx(screen.y)
+                val effectiveY = PlacementGeometry.effectiveYOffsetPx(
+                    plan.piece.height,plan.piece.width,yOffset,biasRow,
+                    PlacementGeometry.cellHeightPx(screen.y))
                 val suggestedX = effectiveX - dx * PlacementGeometry.cellWidthPx(screen.x)
                 val suggestedY = effectiveY - dy * PlacementGeometry.cellHeightPx(screen.y)
                 return "Shape ${plan.observed.signature} landed ${dx} columns, ${dy} rows " +

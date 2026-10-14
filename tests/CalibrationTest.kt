@@ -41,5 +41,22 @@ fun main() {
     val effectivePurpleX=84+purpleBiasX*dx
     val effectivePurpleY=484+purpleBiasY*dy
     require(effectivePurpleX==0 && effectivePurpleY==484)
+    // Tall pieces use the physical pickup tile as the release anchor.
+    // These are experimental test values, not confirmed game-side snapping.
+    require(PlacementGeometry.directTallAnchor(5,1))
+    require(PlacementGeometry.directTallAnchor(3,2))
+    require(!PlacementGeometry.directTallAnchor(2,3))
+    require(!PlacementGeometry.directTallAnchor(1,5))
+    require(PlacementGeometry.effectiveYOffsetPx(5,1,484,0,dy) == 0)
+    require(PlacementGeometry.effectiveYOffsetPx(3,2,484,0,dy) == 0)
+    require(PlacementGeometry.effectiveYOffsetPx(1,5,484,0,dy) == 484)
+    require(PlacementGeometry.effectiveYOffsetPx(2,3,484,-1,dy) == 398)
+    // Purple vertical 5 with bottom-row grip: old release target was
+    // bottomTileY +484, too low; new release at bottomTileY.
+    val bottomTileY = (454f + 7*55f)*2400f/1536f
+    val oldRelease = bottomTileY + 484f
+    val newRelease = bottomTileY + PlacementGeometry.effectiveYOffsetPx(5,1,484,0,dy)
+    require(oldRelease - newRelease == 484f)
+    println("PASS: tall direct-grip marker moves 484 physical pixels up")
     println("PASS: #### global X=84 Y=484; ##### effective X=$effectivePurpleX Y=$effectivePurpleY; green L effective X=$effectiveGreenX Y=$effectiveGreenY")
 }
