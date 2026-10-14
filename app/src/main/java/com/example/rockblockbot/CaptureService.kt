@@ -39,6 +39,8 @@ class CaptureService : Service() {
     private var stableSignature: String? = null
     private var stableCount = 0
     private var inProgress = false
+    private var moveAttempted = false
+    private var lastGestureOutcome = "Not tested in this session"
     private var status = "Waiting for an active game board."
     private var stopped = false
     private val callback = object : MediaProjection.Callback() {
@@ -53,7 +55,7 @@ class CaptureService : Service() {
     private fun publish() {
         val f = latest
         val time = if (latestAt > 0) SimpleDateFormat("HH:mm:ss",Locale.US).format(Date(System.currentTimeMillis() - (SystemClock.elapsedRealtime()-latestAt))) else "none"
-        val text = "Status: $status\nLast game frame: $time | stable frames: $stableCount\n\n" +
+        val text = "Status: $status\nLast gesture result: $lastGestureOutcome\nLast game frame: $time | stable frames: $stableCount\n\n" +
             (f?.report() ?: "No game board captured yet.") + "\n\nOne-move test only. STOP removes floating controls."
         getSharedPreferences("capture",MODE_PRIVATE).edit().putString("report",text).apply()
     }
@@ -124,7 +126,10 @@ class CaptureService : Service() {
         overlay=row
     }
     private fun attemptOneMove() {
-        if (inProgress) return
+        if (inProgress || moveAttempted) {
+            if (moveAttempted) setStatus("One move already attempted. Stop and restart capture to test again.")
+            return
+        }
         val frame=latest
         val now=SystemClock.elapsedRealtime()
         if (TouchService.current==null) { setStatus("Enable Rock Block Bot in Android Accessibility settings first."); return }
@@ -132,7 +137,8 @@ class CaptureService : Service() {
             setStatus("No recent stable 8x8 board with all three pieces. No move made."); return
         }
         if (frame.width>=frame.height) { setStatus("Portrait game capture required. No move made."); return }
-        inProgress=true; moveButton?.isEnabled=false
+        inProgress=true; moveAttempted=true; moveButton?.isEnabled=false
+        lastGestureOutcome = "Waiting for Android gesture result"
         setStatus("Calculating a safe one-piece placement...")
         worker.execute {
             try {
@@ -162,9 +168,10 @@ class CaptureService : Service() {
                     val targetY=(454f+move.row*55f+(piece.height-1)*27.5f+95f)*scaleY
                     val expected=Solver.placeAndClear(frame.board,piece,move.row,move.col)
                     setStatus("Testing piece ${move.pieceIndex+1} to row ${move.row+1}, col ${move.col+1}. One drag only...")
-                    val accepted=TouchService.current?.drag(fromX,fromY,targetX,targetY) { success ->
+                    val accepted=TouchService.current?.dragWithHold(fromX,fromY,targetX,targetY) { success, detail ->
                         handler.post {
-                            if (!success) { finish("Android cancelled the drag. No further moves."); return@post }
+                            lastGestureOutcome = detail
+                            if (!success) { finish("Gesture failed: $detail. No further moves."); return@post }
                             handler.postDelayed({
                                 val actual=latest
                                 val verified=actual!=null && SystemClock.elapsedRealtime()-latestAt<3000 && actual.board==expected
@@ -173,12 +180,20 @@ class CaptureService : Service() {
                             },1700)
                         }
                     } ?: false
-                    if (!accepted) finish("Accessibility service rejected gesture. No move made.")
+                    if (!accepted) {
+                        lastGestureOutcome = "Android rejected initial drag dispatch"
+                        finish("Accessibility service rejected gesture. No move made.")
+                    }
                 }
             } catch (e: Exception) { handler.post { finish("Solver error: ${e.message}. No further moves.") } }
         }
     }
-    private fun finish(message: String) { inProgress=false; moveButton?.isEnabled=true; setStatus(message) }
+    private fun finish(message: String) {
+        inProgress=false
+        // Deliberately keep MOVE 1 disabled after the first attempt. No retries.
+        moveButton?.isEnabled=false
+        setStatus(message)
+    }
     override fun onDestroy() {
         stopped=true
         try { overlay?.let { wm?.removeView(it) } } catch (_: Exception) {}
@@ -189,7 +204,8 @@ class CaptureService : Service() {
         projection?.unregisterCallback(callback)
         projection?.stop(); projection=null
         worker.shutdownNow()
-        setStatus("Stopped. No automatic moves will occur.")
+        // Preserve the last Android gesture outcome when capture is stopped.
+        setStatus("Stopped. Last gesture result preserved below. No automatic moves will occur.")
         super.onDestroy()
     }
 }

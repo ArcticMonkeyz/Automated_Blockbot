@@ -1,31 +1,29 @@
-# Rock Block Bot v2.2 — Single-move diagnostic
+# Rock Block Bot v2.3 — one-move hold/release test
 
-This is an **experimental single-placement test** for Rock Block Saga. It is **not** a finished autonomous player. The game or rewards provider may disallow automated play; check applicable rules before using.
+Experimental Android project for an 8x8 block-placement game. **Not an unattended player.**
 
-## What's new
+## Changes from v2.2
 
-- Preserves last recognized game board and three pieces from v2.1.
-- Plans placements using the existing three-piece survival-focused solver.
-- Adds an Android accessibility gesture service and a small floating **MOVE 1 / STOP** overlay.
-- A single explicit press of **MOVE 1** attempts **one** drag, then compares the next captured board against the expected result. It does not automatically retry or continue.
-- Stops without moving if all three pieces aren't recognized, the frame isn't stable, accessibility isn't enabled, or the solver can't fit all three pieces.
+- Dragging is now a two-stage accessibility gesture: 850 ms travel, continued 350 ms hold, then release.
+- The move is attempted **only once per capture session**; there is no automatic retry.
+- The report records whether Android completed both stages or cancelled/rejected either stage.
+- STOP preserves the latest gesture outcome in the report rather than replacing it.
+- The board/piece recognition and solver remain unchanged. Placement coordinates have not been changed.
 
-## Install and test
+## Upload/update
 
-1. Replace the v2.1 project files in your GitHub Desktop clone with the files in this ZIP, **preserving `.git` and `.github`**.
-2. Commit to main and push. Download the debug APK from the successful GitHub Actions artifact and install it.
-3. Open Blockbot. Tap **Allow floating controls** and grant the Android permission to display over other apps.
-4. Tap **Enable accessibility service** and enable **Rock Block Bot v2.2**. Accessibility gives the app the ability to control touches; enable it only if you're comfortable with that permission.
-5. Tap **Start screen recognition + floating controls**. For this first gesture test select **Entire screen** (single-app sharing can shift gesture coordinates).
-6. Switch to Rock Block Saga and open an active 8x8 board with all three unplaced pieces. Wait two seconds.
-7. Tap **MOVE 1** once. It should try only one placement. Check the actual game immediately. Tap **STOP** to end capture and remove the overlay.
-8. Return to Blockbot and share the report plus a game screenshot, particularly if the piece dropped in the wrong cell.
+Copy the contents of this directory into your existing `Automated_Blockbot` checkout, replacing matching files. **Keep `.git` and `.github` untouched.** Commit and push with GitHub Desktop. Your existing GitHub Actions workflow should compile the APK.
 
-## Important limitations
+## Test
 
-- **Not compiled or tested on a Pixel 7 Pro.** GitHub Actions compilation is still required.
-- Coordinates and finger-to-piece preview offset were estimated from screenshots. The initial vertical drag offset is **+95 reference pixels**; this may be incorrect for some shapes or Android screen configurations. A failed move may lose the puzzle.
-- The current image recognition handles only a limited set of tile colors and game layouts. Other piece shapes, board skins, animations, and new levels may require calibration.
-- The captured game frame and Android touch coordinates can differ if using single-app capture, screen zoom, or changed display resolution. Use Entire screen for this test.
-- The overlay stays on screen until STOP. You can revoke the accessibility permission after testing.
-- No networking, cloud upload, account credentials, or persistent game interaction is implemented.
+1. Install the new debug APK, then open Rock Block Bot v2.3.
+2. Allow overlays and enable the accessibility service if not already enabled.
+3. Start capture; choose **Entire screen** for this drag test.
+4. Open a fresh Rock Block Saga puzzle, leave all three pieces visible, and wait a few seconds.
+5. Tap floating **MOVE 1 once**. Watch whether the piece locks into place.
+6. Tap STOP and return to the bot. The **Last gesture result** should remain visible.
+7. Send a screenshot of the result and explain whether the piece stayed on the board.
+
+A completed Android gesture does **not** guarantee the game accepted the placement. If it still snaps back, we will inspect the game's release behavior and coordinate calibration rather than blindly repeating moves.
+
+Only enable accessibility for testing and disable it afterward. Use at your own risk: gameplay automation may be restricted by the game's or rewards program's rules.

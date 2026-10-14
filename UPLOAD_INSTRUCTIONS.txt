@@ -1,10 +1,14 @@
-RockBlockBot v2.2 — update existing GitHub repository
+RockBlockBot v2.3 — update your existing GitHub repository
 
 1. Extract this ZIP on your PC.
-2. Open GitHub Desktop -> Repository -> Show in Explorer.
-3. Copy app/, build.gradle.kts, settings.gradle.kts, README.md and UPLOAD_INSTRUCTIONS.txt from this extracted folder into your existing repository. Replace existing files.
-4. Keep .git and .github unchanged. Do not copy an extra parent folder.
-5. GitHub Desktop: Summary = "Blockbot v2.2 single move test" -> Commit to main -> Push origin.
-6. GitHub Actions -> successful build -> Artifacts -> download ZIP -> extract app-debug.apk -> install on Pixel 7 Pro.
+2. In GitHub Desktop, select Repository -> Show in Explorer.
+3. Copy ALL files and folders INSIDE this extracted folder into the repository directory. Replace matching files.
+4. Keep .git and .github untouched. Do not nest an extra v2.3 folder.
+5. In GitHub Desktop, use commit summary: "Blockbot v2.3 hold release test".
+6. Click Commit to main, then Push origin.
+7. Wait for GitHub Actions to finish successfully.
+8. Download the latest APK artifact ZIP, extract app-debug.apk, and install it on your Pixel 7 Pro.
 
-This is a ONE-DRAG diagnostic, not unattended gameplay. Read README.md before enabling accessibility.
+For the test, enable screen capture (Entire screen), overlay, and accessibility. Open Rock Block Saga, wait for recognition, tap MOVE 1 ONCE, wait 3 seconds, and tap STOP. Return to Blockbot to see the preserved Last gesture result.
+
+This is a diagnostic build with no automatic retry or continuous play. See README.md.
