@@ -1,3 +1,13 @@
+# RockBlockBot v4.1 — guarded movement / recognition diagnostic build
+
+This is the **first safety stage** of a movement-system redesign, not a claim of fully corrected dragging. Do not use unattended play.
+
+- Vertical straight-piece candidates are cross-checked against independently measured visible tile bands. Conflicting counts are rejected rather than dragged. This may reject some valid pieces when seams are faint.
+- A hard release-coordinate guard refuses a drag if its finger endpoint lies outside the calibrated board bounds. This prevents the observed extreme off-board releases, but may block a placement that the game could otherwise accept because of its finger-to-piece lift offset.
+- Existing survival solver, color recognition, saved per-piece offsets, and manual PREVIEW/NEXT MOVE flow are retained.
+- The underlying gesture still uses an approximate lift offset. The remaining engineering work is a true measured lift model and validation on-device; Android Accessibility gesture dispatch is not a closed-loop drag controller.
+- The full Android build and physical-device placement **have not been tested**. Build with GitHub Actions and inspect preview first. Stop on any shape mismatch or BLOCKED message.
+
 # RockBlockBot v4.0.1 - Build hotfix
 
 Fix Kotlin compile errors in `detectVerticalStrip` (use `core.first()` and `core.last()` on a `List<Int>`). No placement or detector logic changed. Added a test-only `tests/CompileRecognitionSmoke.sh` check and bumped Android version to `0.4.0.1` (code 23). Android full build needs GitHub Actions.

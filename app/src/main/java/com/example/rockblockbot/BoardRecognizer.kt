@@ -685,7 +685,29 @@ object BoardRecognizer {
                 val zone=if(useWide) wide else fixed
                 // A malformed continuation must be rejected rather than
                 // returning a plausible but shorter fixed-zone fallback.
-                detectPiece(image,zone,colors[i],useWide)
+                val candidate = detectPiece(image,zone,colors[i],useWide)
+                // Independently count visible vertical tile bands. When seams
+                // clearly show N tiles, reject a conflicting N+1 pixel-fit.
+                if (candidate != null && candidate.rows.size >= 2 &&
+                    candidate.rows.all { it == "#" }) {
+                    val x = candidate.gripX.toInt().coerceIn(0,image.width-1)
+                    val top = (candidate.gripY - (candidate.rows.size-1)*candidate.pitch - candidate.pitch/2)
+                        .toInt().coerceIn(0,image.height-1)
+                    val bottom = (candidate.gripY + candidate.pitch/2)
+                        .toInt().coerceIn(top+1,image.height)
+                    val profile = IntArray(bottom-top) { dy ->
+                        var hits=0
+                        for (dx in -8..8 step 2) {
+                            val xx=x+dx
+                            if (xx in 0 until image.width &&
+                                colors[i]?.let { matches(image.getPixel(xx,top+dy),it) } == true) hits++
+                        }
+                        hits
+                    }
+                    val seams = bands(profile)
+                    if (reliable(seams,profile.size) && seams.size in 2..6 &&
+                        seams.size != candidate.rows.size) null else candidate
+                } else candidate
             }
             val evidence=seeds.map { trayHasPieceEvidence(image,it) }
             return Frame(board,pieces,bitmap.width,bitmap.height,evidence)

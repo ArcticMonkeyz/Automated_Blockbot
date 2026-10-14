@@ -518,6 +518,18 @@ class CaptureService : Service() {
             coords[2] !in 0f..screen.x.toFloat() || coords[3] !in 0f..screen.y.toFloat()) {
             setStatus("Drag would leave the screen. Adjust X/Y or TALL Y, then check the preview."); return
         }
+        // Hard safety limit: refuse release points beyond the board edge.
+        // Reference board centers run x=163..548, y=454..839; one half-cell
+        // margin allows a little touch imprecision without off-board drags.
+        val boardLeft = (163f - 27.5f) * screen.x / BoardRecognizer.REF_WIDTH
+        val boardRight = (548f + 27.5f) * screen.x / BoardRecognizer.REF_WIDTH
+        val boardTop = (454f - 27.5f) * screen.y / BoardRecognizer.REF_HEIGHT
+        val boardBottom = (839f + 27.5f) * screen.y / BoardRecognizer.REF_HEIGHT
+        if (coords[2] !in boardLeft..boardRight || coords[3] !in boardTop..boardBottom) {
+            setStatus("BLOCKED: finger release (${coords[2].toInt()},${coords[3].toInt()}) " +
+                "is outside board limits. Do not move; inspect grip/lift calibration.")
+            return
+        }
         inProgress = true
         captureFrozen = false
         moveButton?.isEnabled = false
