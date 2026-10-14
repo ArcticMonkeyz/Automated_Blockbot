@@ -32,7 +32,7 @@ class MainActivity : Activity() {
         fun button(value: String, fn: () -> Unit) {
             layout.addView(Button(this).apply { text=value; setOnClickListener { fn() } })
         }
-        label("Rock Block Bot v4.1 — per-piece calibration",22f)
+        label("Rock Block Bot v4.3 — individual tile recognition",22f)
         label("1. Enable overlay/accessibility, then SHARE A SINGLE APP: Rock Block Saga. " +
             "2. PREVIEW with all real tray pieces recognized, and compare the entire shape and green squares. " +
             "3. Open SHOW CAL: global X/Y affect all pieces; TALL Y adjusts all tall pieces; " +

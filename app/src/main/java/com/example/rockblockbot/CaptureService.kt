@@ -92,7 +92,15 @@ class CaptureService : Service() {
             .putString("report",text).putString("placementCheck",lastPlacementCheck)
             .putString("lastTouchPath",lastTouchPath).apply()
     }
-    private fun setStatus(s: String) { status=s; publish() }
+    private fun setStatus(s: String) {
+        status=s
+        // PREVIEW failures must be visible in the floating panel, not only in
+        // the main activity (which is behind the captured game).
+        if (s.startsWith("PREVIEW BLOCKED") || s.startsWith("Need a stable") ||
+            s.startsWith("No complete plan") || s.startsWith("Game changed during") ||
+            s.startsWith("Preview solver error")) shapeLabel?.text=s
+        publish()
+    }
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == "STOP") { stopSelf(); return START_NOT_STICKY }
         if (intent?.action != "START" || projection != null) return START_NOT_STICKY
@@ -368,6 +376,7 @@ class CaptureService : Service() {
         shapeLabel?.text = "Piece ${plan.move.pieceIndex+1}: ${plan.observed.signature} " +
             "(${plan.observed.count} blocks); pickup tile: " +
             "row ${plan.observed.gripRow+1}, col ${plan.observed.gripCol+1}. " +
+            "${plan.observed.detectionMethod} (${plan.observed.tileCenters.size} marked); " +
             "Shape correction: ${PlacementGeometry.shapeCorrectionCells(plan.observed.signature,plan.observed.tileColor)} cells; " +
             (if (PlacementGeometry.directTallAnchor(plan.piece.height,plan.piece.width))
                 "Tall Y calibrated (trial). " else "") + "Check shape!"
@@ -393,7 +402,8 @@ class CaptureService : Service() {
         }
         marker?.setPlan(
             coords, plan.move.row, plan.move.col, plan.piece.normalized,
-            screen.x / BoardRecognizer.REF_WIDTH, screen.y / BoardRecognizer.REF_HEIGHT
+            screen.x / BoardRecognizer.REF_WIDTH, screen.y / BoardRecognizer.REF_HEIGHT,
+            plan.observed.tileCenters
         )
     }
 
@@ -413,7 +423,7 @@ class CaptureService : Service() {
             return
         }
         val frame = latest
-        if (frame == null || frame.recognized !in 1..2 || stableCount < 2 ||
+        if (frame == null || frame.recognized !in 1..2 || stableCount < 3 ||
             SystemClock.elapsedRealtime()-latestAt > 4000L) {
             setStatus("Resume requires a recent stable board with exactly 1 or 2 visible pieces.")
             return
@@ -441,10 +451,11 @@ class CaptureService : Service() {
                 "Do NOT use RESUME to skip it. STOP and send the report.")
             return
         }
-        if (frame == null || frame.recognized != expectedPieces || stableCount < 2 ||
+        if (frame == null || frame.recognized != expectedPieces || stableCount < 3 ||
             SystemClock.elapsedRealtime() - latestAt > 4000L || frame.width >= frame.height) {
-            setStatus("Need a stable portrait game board with $expectedPieces/$expectedPieces " +
-                "remaining pieces recognized. If a tile is missing, STOP and send the report.")
+            setStatus("Need $expectedPieces/$expectedPieces detected tray pieces and 3 stable frames " +
+                "(currently ${frame?.recognized ?: 0}/3, $stableCount stable). " +
+                "If a visible tile is missing, STOP and send the report; do not use RESUME.")
             return
         }
         preparing = true

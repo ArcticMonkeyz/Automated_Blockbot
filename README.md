@@ -1,65 +1,33 @@
-# v4.2 — Individual vertical tile seam recognition
+# RockBlockBot v4.3 - individual tile-center recognition
 
-- Counts real dark boundaries between adjacent vertical tiles before assigning a vertical-strip block count.
-- Rejects ambiguous narrow vertical strips rather than guessing via bounding-box pitch.
-- Leaves board strategy, gesture offsets and per-piece calibrations unchanged.
-- Offline image regression: three-high purple `#/#/#` (previously four), five-high green `#/#/#/#/#`, five-high purple, blue T and red 3x3.
-- Kotlin recognition smoke test and existing calibration tests passed. Full Android APK build and on-device capture still require verification.
+This is a **guided test build**, not guaranteed hands-free placement. It preserves the survival solver and the existing movement/per-piece calibration system. The Android APK must be built in GitHub Actions.
 
-# RockBlockBot v4.2 — guarded movement / recognition diagnostic build
+## What changed
 
-This is the **first safety stage** of a movement-system redesign, not a claim of fully corrected dragging. Do not use unattended play.
+1. **One detector for horizontal, vertical, and irregular pieces.** The primary recognizer builds an image-color mask for each tray slot, samples each proposed square's **interior** independently, finds its center, and checks the dark seam between every pair of neighboring occupied tiles. It considers competing grid sizes (for example purple vertical **three** versus phantom **four**) and chooses a well-supported explanation. No shape-library whitelist is needed.
+2. **Overlaid source-tile markers.** During PREVIEW, cyan **numbered rings 1, 2, 3, ...** show precisely which squares were counted in the selected piece. Green squares still indicate the planned board placement; blue ring marks pickup, red crosshair marks release. The new markers appear **only if the individual-tile detector succeeded**. A legacy fallback might have no numbered rings: examine its shape carefully.
+3. **Visible error text.** PREVIEW requires three identical analyzed frames, and if it cannot find all visible pieces, the floating controls display the block reason rather than seeming unresponsive. Do not bypass this by pressing RESUME when all three physical pieces are present.
+4. **Stronger ambiguity protection.** Each candidate must cover essentially all visible colored pixels, form an orthogonally connected shape, and be supported by real tile seams. If the new method cannot verify it, existing conservative recognition checks still apply.
 
-- Vertical straight-piece candidates are cross-checked against independently measured visible tile bands. Conflicting counts are rejected rather than dragged. This may reject some valid pieces when seams are faint.
-- A hard release-coordinate guard refuses a drag if its finger endpoint lies outside the calibrated board bounds. This prevents the observed extreme off-board releases, but may block a placement that the game could otherwise accept because of its finger-to-piece lift offset.
-- Existing survival solver, color recognition, saved per-piece offsets, and manual PREVIEW/NEXT MOVE flow are retained.
-- The underlying gesture still uses an approximate lift offset. The remaining engineering work is a true measured lift model and validation on-device; Android Accessibility gesture dispatch is not a closed-loop drag controller.
-- The full Android build and physical-device placement **have not been tested**. Build with GitHub Actions and inspect preview first. Stop on any shape mismatch or BLOCKED message.
+Nothing here changes the drag offsets, saved per-color/per-shape calibrations, or strategic solver. Some shapes still take the legacy recognition path, and physical on-phone results **must be verified**.
 
-# RockBlockBot v4.0.1 - Build hotfix
+## Install and first test
 
-Fix Kotlin compile errors in `detectVerticalStrip` (use `core.first()` and `core.last()` on a `List<Int>`). No placement or detector logic changed. Added a test-only `tests/CompileRecognitionSmoke.sh` check and bumped Android version to `0.4.0.1` (code 23). Android full build needs GitHub Actions.
+1. Extract this ZIP to your PC.
+2. In **GitHub Desktop -> Repository -> Show in Explorer**, copy the **contents** of this extracted folder into the existing repository, replacing matching project files. Keep hidden `.git` and `.github` directories unchanged.
+3. Commit, push, and download the new **debug APK** produced by your existing GitHub Actions build workflow.
+4. Install over the previous app. Start capture using **Share a single app -> Rock Block Saga**.
+5. With three actual tray pieces visible, press PREVIEW **without RESUME**. Verify the piece count, shape, and **numbered tile rings** before NEXT MOVE. Do **not** move a misrecognized piece. If recognition still fails, STOP and send the report/screenshot.
+6. If you test a placement, wait about 8-10 seconds for VERIFIED/UNVERIFIED; never continue an unverified sequence.
 
-# RockBlockBot v4.0 — vertical recognition and measured placement presets
+Saved calibration defaults are unchanged (previously X=+84 px, Y=+484 px, tall delta=-240 px unless you modified them). Correct identification **does not prove accurate placement**: the game's finger-to-piece lift behavior remains experimental.
 
-- Added vertical strip geometry check using physical tile width and lane coverage to prevent five-high strips being interpreted as six. Ambiguous six-high readings without reliable seams are rejected.
-- Added RED #### default release bias one row up; PURPLE #../### default bias one column left and one row up.
-- Preserved user-saved per-piece adjustments, tall calibration, existing horizontal presets, solver, and verification.
-- Do not move unless the preview exactly matches the visible piece. Green five-high needs on-device verification; offline tests do not prove Android capture performance.
-- Build the APK using the existing GitHub Actions workflow; complete Android build not run locally.
+## Local validation
 
-# Rock Block Bot v3.9 — per-piece calibration
+- The recognizer compiled with Kotlin and a host `Bitmap` substitute.
+- Against 94 prior screenshots, its shape output differed in only one previously missing purple 5-block case; the purple vertical **3**, blue **T**, red **3x3**, green **5**, and touching yellow/green pieces retained their expected shapes.
+- Against 22 PNG/JPEG/blur/stretched/rescaled diagnostic variants of the purple-3 frame, the purple shape stayed correct in 21 variants, and it **rejected** the most extreme vertical stretch rather than inventing another square. It also recognized a synthetic horizontal 3-tile example.
+- Local per-piece calibration/placement diagnostics tests pass.
+- The **full Android Gradle build and physical capture** have not been run locally. Screen-capture visuals can differ from the user's screenshots.
 
-Android guided puzzle solver for Rock Block Saga. Every gesture still requires your confirmation. **Not tested on the physical device yet; use controlled one-move trials.**
-
-## What's new in v3.9
-
-- **Per-piece persisted offsets.** Each exact shape + color has its own `PIECE X−`, `PIECE X+`, `PIECE Y−`, and `PIECE Y+` buttons under **SHOW CAL**, available after PREVIEW. Each tap changes the release endpoint by 20 real screen pixels for **this shape and color only**. Values survive app restarts.
-- **Keeps the calibrated global X/Y and tall delta.** Existing installations keep their saved defaults, including X=+84, Y=+484, Tall delta=−240px. Previously configured offsets continue to work for pieces not explicitly corrected.
-- **Measured purple five-vertical preset.** Shape `#/#/#/#/#` in PURPLE starts with a one-cell release correction **left and down** compared with v3.8; matches the +1 column / −1 row displacement in the previous test. This is still experimental. Yellow `##/#./#.` (the previously verified 3-row yellow L) is unchanged. The earlier green L and purple five-horizontal presets remain.
-- **Unexpected clear diagnostics.** Verification now searches possible final boards from legal placements, including row/column clears, instead of only counting newly occupied squares. If one alternative location uniquely explains the board, the report suggests a correction for that piece only; it does not silently apply corrections.
-- **Floating verification status.** A VERIFIED or UNVERIFIED result now replaces the 'Wait for verification' message on the overlay. After moving, allow at least 8 seconds for game animation and post-release captures.
-- **No changes** to piece recognition, the survival solver, or drag timing.
-
-## How to install
-
-1. Extract the ZIP. In GitHub Desktop, open the existing repository (Repository → Show in Explorer).
-2. Copy extracted **contents** into the repo, replacing matching files. Keep `.git` and `.github` untouched, including the existing GitHub Actions APK build workflow.
-3. Commit and push; after the debug APK build succeeds in GitHub Actions, install it over the older APK.
-4. Start screen capture; choose **Share a single app → Rock Block Saga**.
-5. Press PREVIEW with all physically visible pieces recognized. Check green cells and blue pickup circle before every NEXT MOVE.
-6. To tune one piece, open SHOW CAL *after* PREVIEW and use the **PIECE X/Y** buttons; the exact pickup and release coordinates update instantly. These changes are specific to the shape + color currently previewed. Global X/Y and TALL Y are still present.
-7. NEXT MOVE only after the preview looks correct. Wait for VERIFIED/UNVERIFIED. If UNVERIFIED, STOP and inspect the report; don't keep moving pieces. After a verified move, press PREVIEW again.
-
-**Important:** The per-piece preset is empirically based on two phone screenshots, not a guarantee. Shapes not measured yet use the current working general/tall calibration. A valid-looking preview alone doesn't prove release alignment; test each new shape carefully.
-
-## Local tests
-
-From this source root:
-
-```bash
-kotlinc app/src/main/java/com/example/rockblockbot/{PlacementGeometry.kt,PieceCalibration.kt,PlacementDiagnostics.kt,Solver.kt,ShapeLibrary.kt} tests/PerPieceCalibrationTest.kt -include-runtime -d /tmp/blockbot39-tests.jar
-java -jar /tmp/blockbot39-tests.jar
-```
-
-The local tests validate calculation and board-transition logic, not Android's overlay UI or AccessibilityService gesture dispatch. Android SDK/Gradle build needs GitHub Actions.
+The host image runner is provided in `tests/RunScreenshotRecognition.sh` for reproducible tests with image paths passed as arguments (requires a JDK and `kotlinc`). The screenshot assets themselves are **not bundled**.

@@ -23,7 +23,9 @@ object BoardRecognizer {
         val pitch: Int, val fit: Double,
         val knownShape: Boolean,
         val stripesX: Int, val stripesY: Int,
-        val tileColor: String = ""
+        val tileColor: String = "",
+        val tileCenters: List<Pair<Float, Float>> = emptyList(),
+        val detectionMethod: String = "legacy"
     ) {
         fun asPiece(): Piece = Piece(rows.flatMapIndexed { r, line ->
             line.mapIndexedNotNull { c, ch -> if (ch == '#') Cell(r, c) else null }
@@ -52,7 +54,8 @@ object BoardRecognizer {
                 "Piece ${i+1}: " + (p?.let {
                     "${it.signature} (${it.count} blocks, pitch ${it.pitch}, " +
                     "fit ${"%.2f".format(java.util.Locale.US, it.fit)}, " +
-                    "stripes ${it.stripesX}x${it.stripesY}, color ${it.tileColor}, direct geometry)"
+                    "stripes ${it.stripesX}x${it.stripesY}, color ${it.tileColor}, ${it.detectionMethod}, " +
+                    "centers ${it.tileCenters.size})"
                 } ?: if (trayEvidence.getOrElse(i) { false })
                     "NOT RECOGNIZED (colored piece still visible)" else "NOT RECOGNIZED (empty/uncertain)")
             }.joinToString("\n")
@@ -427,6 +430,180 @@ object BoardRecognizer {
             rows.joinToString("/") in knownFootprints, 1, count, color.name)
     }
 
+    /**
+     * Independent physical tile-center detector. A candidate square is counted
+     * ONLY if its interior contains matching tile color, and every shared edge
+     * between occupied squares must be supported by a real dark tile seam.
+     *
+     * This avoids guessing "4" from a 3-square vertical piece's bounding
+     * height. It uses the SAME algorithm for horizontal, vertical, T, L and
+     * rectangle pieces, without a shape-library whitelist.
+     */
+    private fun detectFromTileCenters(
+        image: Bitmap, zone: Zone, color: TileColor,
+        mask: BooleanArray, zoneW: Int, zoneH: Int,
+        minX: Int, maxX: Int, minY: Int, maxY: Int, pixelCount: Int
+    ): ObservedPiece? {
+        val width = maxX-minX+1
+        val height = maxY-minY+1
+        if(width !in 24..310 || height !in 24..310 || pixelCount<500) return null
+        // One summed-area map permits accurate interior-rectangle measurements
+        // even where a tile contains a bright jewel or a dark texture vein.
+        val stride=zoneW+1
+        val integral=IntArray(stride*(zoneH+1))
+        for(y in 0 until zoneH) {
+            var run=0
+            for(x in 0 until zoneW) {
+                if(mask[y*zoneW+x]) run++
+                integral[(y+1)*stride+x+1]=integral[y*stride+x+1]+run
+            }
+        }
+        fun rect(x0:Int,y0:Int,x1:Int,y1:Int):Int {
+            val a=x0.coerceIn(0,zoneW); val b=x1.coerceIn(0,zoneW)
+            val c=y0.coerceIn(0,zoneH); val d=y1.coerceIn(0,zoneH)
+            if(a>=b || c>=d) return 0
+            return integral[d*stride+b]-integral[c*stride+b]-
+                integral[d*stride+a]+integral[c*stride+a]
+        }
+        fun luminance(x:Int,y:Int):Double {
+            val p=image.getPixel(zone.left+x,zone.top+y)
+            return Color.red(p)*0.30+Color.green(p)*0.59+Color.blue(p)*0.11
+        }
+        // Compare the boundary with two square interiors. Searching +/- 6 px
+        // tolerates dark bevels offset from the colored-pixel bounding edge.
+        fun seam(horizontal:Boolean,boundary:Double,cross:Double,alongSize:Double):Double {
+            val offset=maxOf(6,(alongSize*.20).roundToInt())
+            val samples=7
+            var best=Double.NEGATIVE_INFINITY
+            for(shift in -6..6) {
+                var contrast=0.0
+                var n=0
+                for(j in 0 until samples) {
+                    val crossAt=(cross + (j-3)*alongSize*.065).roundToInt()
+                    val b=(boundary.roundToInt()+shift)
+                    val left=if(horizontal) b-offset else crossAt
+                    val top=if(horizontal) crossAt else b-offset
+                    val right=if(horizontal) b+offset else crossAt
+                    val bottom=if(horizontal) crossAt else b+offset
+                    val centerX=if(horizontal) b else crossAt
+                    val centerY=if(horizontal) crossAt else b
+                    if(listOf(left,right,centerX).any { it !in 0 until zoneW } ||
+                       listOf(top,bottom,centerY).any { it !in 0 until zoneH }) continue
+                    val sides=(luminance(left,top)+luminance(right,bottom))/2.0
+                    contrast+=sides-luminance(centerX,centerY)
+                    n++
+                }
+                if(n>0) best=maxOf(best,contrast/n)
+            }
+            return if(best.isFinite()) best else -100.0
+        }
+        data class Guess(val signature:List<String>,val cols:Int,val rows:Int,
+                         val pitchX:Double,val pitchY:Double,val score:Double,
+                         val minimumSeam:Double,val covered:Double)
+        var best:Guess?=null
+        // Bounding boxes restrict count candidates, but NEVER determine the
+        // chosen count alone. Tile centers + seams make the final decision.
+        for(rows in 1..6) for(cols in 1..6) {
+            val pitchX=width.toDouble()/cols
+            val pitchY=height.toDouble()/rows
+            if(pitchX !in 28.0..52.0 || pitchY !in 28.0..52.0) continue
+            if(kotlin.math.abs(pitchX-pitchY)>maxOf(pitchX,pitchY)*.31) continue
+            val occupied=Array(rows) { BooleanArray(cols) }
+            val interior=Array(rows) { DoubleArray(cols) }
+            var totalOccupied=0
+            for(r in 0 until rows) for(c in 0 until cols) {
+                val cx=minX+(c+.5)*pitchX
+                val cy=minY+(r+.5)*pitchY
+                val hx=maxOf(6.0,pitchX*.24)
+                val hy=maxOf(6.0,pitchY*.24)
+                val x0=(cx-hx).roundToInt(); val x1=(cx+hx).roundToInt()
+                val y0=(cy-hy).roundToInt(); val y1=(cy+hy).roundToInt()
+                val density=rect(x0,y0,x1,y1).toDouble()/((x1-x0)*(y1-y0)).coerceAtLeast(1)
+                interior[r][c]=density
+                occupied[r][c]=density>=.48
+                if(occupied[r][c]) totalOccupied++
+            }
+            if(totalOccupied !in 1..9) continue
+            if((0 until rows).any{r->!occupied[r].any{it}} ||
+               (0 until cols).any{c->(0 until rows).none{r->occupied[r][c]}}) continue
+            // Reject gaps and disconnected sets: game tray pieces are one
+            // orthogonally connected polyomino, not separate colored fragments.
+            val visited=Array(rows){BooleanArray(cols)}
+            val queue=ArrayDeque<Pair<Int,Int>>()
+            val seed=(0 until rows).flatMap{r->(0 until cols).map{c->r to c}}
+                .firstOrNull{(r,c)->occupied[r][c]} ?: continue
+            queue.add(seed);visited[seed.first][seed.second]=true
+            var reached=0
+            while(queue.isNotEmpty()) {
+                val (r,c)=queue.removeFirst();reached++
+                for((dr,dc) in listOf(-1 to 0,1 to 0,0 to -1,0 to 1)) {
+                    val rr=r+dr; val cc=c+dc
+                    if(rr in 0 until rows && cc in 0 until cols &&
+                        occupied[rr][cc] && !visited[rr][cc]) {
+                        visited[rr][cc]=true;queue.add(rr to cc)
+                    }
+                }
+            }
+            if(reached!=totalOccupied) continue
+            // Full-mask recall: an actual tile missed by the center sampler
+            // must not be silently omitted from the planned shape.
+            var explained=0
+            for(r in 0 until rows) for(c in 0 until cols) if(occupied[r][c]) {
+                val x0=minX+(c*pitchX).roundToInt()
+                val x1=minX+((c+1)*pitchX).roundToInt()
+                val y0=minY+(r*pitchY).roundToInt()
+                val y1=minY+((r+1)*pitchY).roundToInt()
+                explained+=rect(x0,y0,x1,y1)
+            }
+            val recall=explained.toDouble()/pixelCount
+            if(recall < .92) continue
+            // A real seam must appear BETWEEN every adjacent pair of detected
+            // tiles. Four virtual slices of a three-block strip have no third
+            // physical seam and therefore cannot win this test.
+            var minSeam=Double.POSITIVE_INFINITY
+            var totalSeam=0.0
+            var adjacent=0
+            for(r in 0 until rows) for(c in 0 until cols) if(occupied[r][c]) {
+                val cx=minX+(c+.5)*pitchX
+                val cy=minY+(r+.5)*pitchY
+                if(c+1<cols && occupied[r][c+1]) {
+                    val strength=seam(true,minX+(c+1)*pitchX,cy,pitchY)
+                    minSeam=minOf(minSeam,strength);totalSeam+=strength;adjacent++
+                }
+                if(r+1<rows && occupied[r+1][c]) {
+                    val strength=seam(false,minY+(r+1)*pitchY,cx,pitchX)
+                    minSeam=minOf(minSeam,strength);totalSeam+=strength;adjacent++
+                }
+            }
+            if(totalOccupied>1 && (adjacent<totalOccupied-1 || minSeam<8.0)) continue
+            val averageSeam=if(adjacent>0) totalSeam/adjacent else 18.0
+            val centerScore=interior.flatMap{it.toList()}.average()
+            val squarePenalty=abs(pitchX-pitchY)/maxOf(pitchX,pitchY)
+            val score=.40*recall + .18*centerScore + .35*(averageSeam/27.0).coerceIn(0.0,1.2) -
+                .18*squarePenalty + .07*(minSeam/27.0).coerceIn(0.0,1.2)
+            val pattern=(0 until rows).map{r->(0 until cols).joinToString(""){c->if(occupied[r][c]) "#" else "."}}
+            val candidate=Guess(pattern,cols,rows,pitchX,pitchY,score,minSeam,recall)
+            if(best==null || candidate.score>(best?.score ?: -1.0)) best=candidate
+        }
+        val chosen=best ?: return null
+        if(chosen.score<.70) return null
+        val cells=(0 until chosen.rows).flatMap{r->(0 until chosen.cols).mapNotNull{c->
+            if(chosen.signature[r][c]=='#')
+                (zone.left+minX+(c+.5)*chosen.pitchX).toFloat() to
+                (zone.top+minY+(r+.5)*chosen.pitchY).toFloat()
+            else null
+        }}
+        val gripRow=chosen.signature.indexOfLast{'#' in it}
+        val gripCol=chosen.signature[gripRow].indexOf('#')
+        val gripX=(zone.left+minX+(gripCol+.5)*chosen.pitchX).toFloat()
+        val gripY=(zone.top+minY+(gripRow+.5)*chosen.pitchY).toFloat()
+        val signature=chosen.signature.joinToString("/")
+        return ObservedPiece(chosen.signature,gripX,gripY,gripRow,gripCol,
+            ((chosen.pitchX+chosen.pitchY)/2).roundToInt(),
+            chosen.score.coerceIn(0.0,1.0),signature in knownFootprints,
+            chosen.cols,chosen.rows,color.name,cells,"individual tile centers")
+    }
+
     private fun detectPiece(image:Bitmap,zone:Zone,color:TileColor?,pruneFringe:Boolean):ObservedPiece? {
         // The seed selects a color. The wider zone measures its FULL extent.
         // Different-color neighboring pieces can touch without merging.
@@ -559,6 +736,10 @@ object BoardRecognizer {
         }
         val xb=bands(xProfile);val yb=bands(yProfile)
         val validX=reliable(xb,boxW);val validY=reliable(yb,boxH)
+        // Universal primary route: each candidate tile is sampled separately
+        // and validated against dark borders shared with neighboring tiles.
+        detectFromTileCenters(image,zone,color,mask,zoneW,zoneH,
+            minX,maxX,minY,maxY,pixelCount)?.let { return it }
         // Detect straight pieces before the fallback pixel-fit. This must run
         // even when visual seams merge and bands() sees only one wide stripe.
         detectStraightStrip(image, zone, color, minX, minY, boxW,
@@ -680,7 +861,7 @@ object BoardRecognizer {
             val gy=zone.top+minY+(firstRow+gripRow+.5f)*pitch
             if (uncertainVertical && trimmed.size >= 6 && trimmed.all { it == "#" }) continue
             val candidate=Candidate(trimmed,pitch,score,recall,gx,gy,gripRow,gripCol,known)
-            if(best==null || candidate.score>best.score) best=candidate
+            if(best==null || candidate.score>(best?.score ?: -1.0)) best=candidate
         }
         val chosen=best ?: return null
         // Reject explanations that omit a substantial part of the colored
@@ -737,7 +918,7 @@ object BoardRecognizer {
                 val candidate = detectPiece(image,zone,colors[i],useWide)
                 // Independently count visible vertical tile bands. When seams
                 // clearly show N tiles, reject a conflicting N+1 pixel-fit.
-                if (candidate != null && candidate.rows.size >= 2 &&
+                if (candidate != null && candidate.detectionMethod != "individual tile centers" && candidate.rows.size >= 2 &&
                     candidate.rows.all { it == "#" }) {
                     val x = candidate.gripX.toInt().coerceIn(0,image.width-1)
                     val top = (candidate.gripY - (candidate.rows.size-1)*candidate.pitch - candidate.pitch/2)

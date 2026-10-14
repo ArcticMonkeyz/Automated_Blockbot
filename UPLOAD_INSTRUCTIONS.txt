@@ -1,11 +1,11 @@
-RockBlockBot v4.0.1 - Kotlin compile hotfix
+RockBlockBot v4.3 - Individual Tile Recognition
 
-1. Extract RockBlockBot-v4.0.1-build-hotfix.zip.
-2. In GitHub Desktop, open your existing repo (Repository > Show in Explorer).
-3. Copy the CONTENTS of the extracted RockBlockBot-v4.0.1 folder into the repo,
-   replacing matching files. Do not delete .git or .github.
-4. Commit 'v4.0.1 fix BoardRecognizer compile' and Push origin.
-5. Open the GitHub Actions 'Build debug APK' run. Install the APK only after it succeeds.
+1. Extract ZIP on PC.
+2. In GitHub Desktop use Repository > Show in Explorer.
+3. Copy the CONTENTS of RockBlockBot-v4.3 into the clone and overwrite matching project files.
+4. Do not delete .git or .github.
+5. Commit and Push origin.
+6. Wait for Build Debug APK in GitHub Actions, download artifact, install APK.
+7. Share a SINGLE APP (Rock Block Saga), PREVIEW, inspect cyan numbered tile rings and green board cells. Never NEXT MOVE on an incorrect shape.
 
-This corrects .first/.last calls on a Kotlin List and updates the app version.
-The existing solver, movement calibration, and recognition logic are unchanged.
+Android build not run in this local environment.

@@ -12,14 +12,17 @@ class CalibrationOverlay(context: Context) : View(context) {
     private var row = 0
     private var col = 0
     private var cells: List<Cell> = emptyList()
+    private var detectedCenters: List<Pair<Float, Float>> = emptyList()
     private var sx = 1f
     private var sy = 1f
 
-    fun setPlan(points: FloatArray, r: Int, c: Int, pieceCells: List<Cell>, scaleX: Float, scaleY: Float) {
+    fun setPlan(points: FloatArray, r: Int, c: Int, pieceCells: List<Cell>, scaleX: Float, scaleY: Float,
+                centers: List<Pair<Float, Float>> = emptyList()) {
         coords = points.copyOf()
         row = r
         col = c
         cells = pieceCells.toList()
+        detectedCenters = centers.toList()
         sx = scaleX
         sy = scaleY
         invalidate()
@@ -35,6 +38,25 @@ class CalibrationOverlay(context: Context) : View(context) {
             val y = (454f + (row + cell.r)*55f)*sy
             canvas.drawRect(x-22f*sx,y-22f*sy,x+22f*sx,y+22f*sy,paint)
         }
+        // Numbered circles mark INDIVIDUAL source tiles in the tray. Unlike
+        // the green target squares, these are measured from image recognition.
+        // A fallback / uncertain detection gets no numbered tile centers.
+        for ((index, tile) in detectedCenters.withIndex()) {
+            val px = tile.first * sx
+            val py = tile.second * sy
+            paint.style = Paint.Style.STROKE
+            paint.strokeWidth = 2.5f
+            paint.color = 0xFF00DFFF.toInt()
+            canvas.drawCircle(px, py, 13f * minOf(sx, sy), paint)
+            paint.style = Paint.Style.FILL
+            paint.textAlign = Paint.Align.CENTER
+            paint.textSize = 15f * minOf(sx, sy)
+            paint.isFakeBoldText = true
+            paint.color = 0xFFFFFFFF.toInt()
+            canvas.drawText((index + 1).toString(), px, py + 5f*sy, paint)
+        }
+        paint.isFakeBoldText = false
+        paint.textAlign = Paint.Align.LEFT
         // Blue ring: start position. Red crosshair: finger release position.
         paint.style = Paint.Style.STROKE
         paint.strokeWidth = 4f

@@ -1,0 +1,11 @@
+v4.3 host recognition regression (October 14, 2026)
+
+94 saved phone screenshots: 93 exactly match the v4.2 shape output; one previously missing purple five-vertical piece is recovered. Screenshots include moving/partially occupied states; preservation of a previous shape is not a guarantee of ground truth.
+22 deliberately modified frames of the purple 3-vertical / blue T / red 3x3 screenshot (blur, color/contrast, JPEG compression, modest scale, vertical-stretch): correct purple 3 in 21; the most distorted 1.30x purple stretch is rejected safely. Five cases that v4.2 rejected now read purple #/#/#; the rest agree.
+One synthetic 3-horizontal red strip (made by removing the bottom two rows from a real 3x3 screenshot) reads ### using individual tile centers.
+Five-high green and five-high purple recognition remains correct on saved examples. Touching yellow five and green four remain separate.
+
+Kotlin recognition compile + per-shape calibration/diagnostic checks: PASS.
+Visual UI overlay syntax compiled with host Android stubs: PASS.
+Android Gradle APK build: NOT AVAILABLE LOCALLY.
+Physical game drag/placement: NOT TESTED on v4.3.
