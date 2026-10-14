@@ -6,6 +6,8 @@ import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
 import android.graphics.PixelFormat
 import android.graphics.Point
+import android.view.View
+import android.widget.TextView
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
 import android.media.ImageReader
@@ -33,6 +35,21 @@ class CaptureService : Service() {
     private var overlay: LinearLayout? = null
     private var wm: WindowManager? = null
     private var moveButton: Button? = null
+    private var previewButton: Button? = null
+    private var offsetLabel: TextView? = null
+    private var marker: CalibrationOverlay? = null
+    private var prepared: Prepared? = null
+    private var preparing = false
+    private var xOffset = 0
+    private var yOffset = 0
+    private data class Prepared(
+        val frame: BoardRecognizer.Frame,
+        val move: Move,
+        val piece: Piece,
+        val observed: BoardRecognizer.ObservedPiece,
+        val expected: Long,
+        val time: Long
+    )
     private var lastAnalyzed = 0L
     private var latest: BoardRecognizer.Frame? = null
     private var latestAt = 0L
@@ -55,7 +72,7 @@ class CaptureService : Service() {
     private fun publish() {
         val f = latest
         val time = if (latestAt > 0) SimpleDateFormat("HH:mm:ss",Locale.US).format(Date(System.currentTimeMillis() - (SystemClock.elapsedRealtime()-latestAt))) else "none"
-        val text = "Status: $status\nLast gesture result: $lastGestureOutcome\nLast game frame: $time | stable frames: $stableCount\n\n" +
+        val text = "Status: $status\nCalibration: X ${xOffset}px, Y ${yOffset}px\nLast gesture result: $lastGestureOutcome\nLast game frame: $time | stable frames: $stableCount\n\n" +
             (f?.report() ?: "No game board captured yet.") + "\n\nOne-move test only. STOP removes floating controls."
         getSharedPreferences("capture",MODE_PRIVATE).edit().putString("report",text).apply()
     }
@@ -68,6 +85,9 @@ class CaptureService : Service() {
             .setContentText("Floating MOVE 1 / STOP controls active")
             .setSmallIcon(android.R.drawable.ic_menu_view).setOngoing(true).build()
         startForeground(22,notification,ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
+        val prefs = getSharedPreferences("calibration", MODE_PRIVATE)
+        xOffset = prefs.getInt("x", 0)
+        yOffset = prefs.getInt("y", 0)
         val data = if (Build.VERSION.SDK_INT >= 33) intent.getParcelableExtra("data",Intent::class.java)
                    else @Suppress("DEPRECATION") (intent.getParcelableExtra("data") as? Intent)
         if (data == null) { setStatus("Missing screen-capture permission."); stopSelf(); return START_NOT_STICKY }
@@ -82,7 +102,7 @@ class CaptureService : Service() {
                 val image = source.acquireLatestImage() ?: return@setOnImageAvailableListener
                 try {
                     val now = SystemClock.elapsedRealtime()
-                    if (now-lastAnalyzed < 450L) return@setOnImageAvailableListener
+                    if (now-lastAnalyzed < 450L || (prepared != null && !inProgress)) return@setOnImageAvailableListener
                     lastAnalyzed=now
                     val plane=image.planes[0]
                     val stride=plane.pixelStride
@@ -107,87 +127,201 @@ class CaptureService : Service() {
             display=projection?.createVirtualDisplay("RockBlockRead",w,h,metrics.densityDpi,
                 DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,reader!!.surface,null,handler)
             createOverlay()
-            setStatus("Capture running. Open Rock Block Saga; wait 2 seconds, then tap MOVE 1.")
+            setStatus("Capture running. Open Rock Block Saga, then tap PREVIEW. Adjust X/Y before MOVE 1.")
         } catch (e: Exception) { setStatus("Start failed: ${e.message}"); stopSelf() }
         return START_NOT_STICKY
     }
     private fun createOverlay() {
         if (!Settings.canDrawOverlays(this)) { setStatus("Floating controls permission missing."); return }
-        wm=getSystemService(WINDOW_SERVICE) as WindowManager
-        val row=LinearLayout(this).apply { orientation=LinearLayout.HORIZONTAL; setBackgroundColor(0xCC222222.toInt()) }
-        moveButton=Button(this).apply { text="MOVE 1"; setOnClickListener { attemptOneMove() } }
-        row.addView(moveButton)
-        row.addView(Button(this).apply { text="STOP"; setOnClickListener { stopSelf() } })
-        val params=WindowManager.LayoutParams(WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+        wm = getSystemService(WINDOW_SERVICE) as WindowManager
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(0xDD222222.toInt())
+        }
+        val actions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        previewButton = Button(this).apply { text = "PREVIEW"; setOnClickListener { prepareMove() } }
+        moveButton = Button(this).apply { text = "MOVE 1"; isEnabled = false; setOnClickListener { attemptOneMove() } }
+        actions.addView(previewButton)
+        actions.addView(moveButton)
+        actions.addView(Button(this).apply { text = "STOP"; setOnClickListener { stopSelf() } })
+        panel.addView(actions)
+        val adjustments = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        fun adjustButton(label: String, dx: Int, dy: Int) {
+            adjustments.addView(Button(this).apply {
+                text = label
+                setOnClickListener { adjust(dx,dy) }
+            })
+        }
+        adjustButton("X -",-20,0); adjustButton("X +",20,0)
+        adjustButton("Y -",0,-20); adjustButton("Y +",0,20)
+        panel.addView(adjustments)
+        offsetLabel = TextView(this).apply { setTextColor(0xFFFFFFFF.toInt()); textSize = 13f }
+        panel.addView(offsetLabel)
+        updateOffsetLabel()
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
-            PixelFormat.TRANSLUCENT).apply { gravity=Gravity.TOP or Gravity.START; x=8; y=65 }
-        wm?.addView(row,params)
-        overlay=row
+            PixelFormat.TRANSLUCENT
+        ).apply { gravity = Gravity.TOP or Gravity.START; x = 8; y = 45 }
+        wm?.addView(panel,params)
+        overlay = panel
     }
-    private fun attemptOneMove() {
-        if (inProgress || moveAttempted) {
-            if (moveAttempted) setStatus("One move already attempted. Stop and restart capture to test again.")
+
+    private fun updateOffsetLabel() {
+        offsetLabel?.text = "Touch endpoint offset: X ${xOffset}px, Y ${yOffset}px (20px steps)"
+    }
+
+    private fun adjust(dx: Int, dy: Int) {
+        if (inProgress || moveAttempted) return
+        xOffset = (xOffset + dx).coerceIn(-240,240)
+        yOffset = (yOffset + dy).coerceIn(-400,400)
+        getSharedPreferences("calibration",MODE_PRIVATE).edit()
+            .putInt("x",xOffset).putInt("y",yOffset).apply()
+        updateOffsetLabel()
+        updateMarker()
+        setStatus("Offsets updated. PREVIEW is visual only; MOVE 1 performs one drag.")
+    }
+
+    private fun screenSize(): Point = Point().also { point ->
+        @Suppress("DEPRECATION")
+        wm!!.defaultDisplay.getRealSize(point)
+    }
+
+    private fun gestureCoords(plan: Prepared): FloatArray {
+        val screen = screenSize()
+        val sx = screen.x / BoardRecognizer.REF_WIDTH
+        val sy = screen.y / BoardRecognizer.REF_HEIGHT
+        val fromX = plan.observed.centerX * sx
+        val fromY = plan.observed.centerY * sy
+        val toX = (163f + plan.move.col*55f + (plan.piece.width-1)*27.5f) * sx + xOffset
+        // No assumed 95px lift: use a measured adjustment in SCREEN pixels.
+        val toY = (454f + plan.move.row*55f + (plan.piece.height-1)*27.5f) * sy + yOffset
+        return floatArrayOf(fromX,fromY,toX,toY)
+    }
+
+    private fun updateMarker() {
+        val plan = prepared ?: return
+        val screen = screenSize()
+        val coords = gestureCoords(plan)
+        if (marker == null) {
+            marker = CalibrationOverlay(this)
+            val params = WindowManager.LayoutParams(
+                screen.x,screen.y,WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                PixelFormat.TRANSLUCENT
+            ).apply { gravity = Gravity.TOP or Gravity.START; x = 0; y = 0 }
+            wm?.addView(marker,params)
+        }
+        marker?.setPlan(
+            coords, plan.move.row, plan.move.col, plan.piece.normalized,
+            screen.x / BoardRecognizer.REF_WIDTH, screen.y / BoardRecognizer.REF_HEIGHT
+        )
+    }
+
+    private fun removeMarker() {
+        try { marker?.let { wm?.removeView(it) } } catch (_: Exception) {}
+        marker = null
+    }
+
+    private fun prepareMove() {
+        if (preparing || inProgress || moveAttempted) return
+        val frame = latest
+        if (frame == null || frame.recognized != 3 || stableCount < 2 ||
+            SystemClock.elapsedRealtime() - latestAt > 4000L || frame.width >= frame.height) {
+            setStatus("Need a recent stable portrait board and 3 pieces. No preview available.")
             return
         }
-        val frame=latest
-        val now=SystemClock.elapsedRealtime()
-        if (TouchService.current==null) { setStatus("Enable Rock Block Bot in Android Accessibility settings first."); return }
-        if (frame==null || frame.recognized!=3 || stableCount<2 || now-latestAt>4000) {
-            setStatus("No recent stable 8x8 board with all three pieces. No move made."); return
-        }
-        if (frame.width>=frame.height) { setStatus("Portrait game capture required. No move made."); return }
-        inProgress=true; moveAttempted=true; moveButton?.isEnabled=false
-        lastGestureOutcome = "Waiting for Android gesture result"
-        setStatus("Calculating a safe one-piece placement...")
+        preparing = true
+        previewButton?.isEnabled = false
+        setStatus("Calculating a visual preview (no touch gesture)...")
         worker.execute {
             try {
-                val pieces=frame.pieces.map { it!!.asPiece() }
-                val plan=Solver.solve(frame.board,pieces)
+                val pieces = frame.pieces.map { it!!.asPiece() }
+                val plan = Solver.solve(frame.board,pieces)
                 handler.post {
+                    preparing = false
                     if (stopped) return@post
+                    previewButton?.isEnabled = true
                     if (!plan.complete || plan.moves.isEmpty()) {
-                        finish("No complete three-piece plan found. No move made."); return@post
+                        setStatus("No safe complete three-piece plan. No move available.")
+                        return@post
                     }
-                    if (SystemClock.elapsedRealtime()-latestAt>5000 || latest?.signature!=frame.signature) {
-                        finish("Game board changed while planning. No move made."); return@post
+                    if (latest?.signature != frame.signature ||
+                        SystemClock.elapsedRealtime()-latestAt > 6000L) {
+                        setStatus("Game changed during planning. Tap PREVIEW again.")
+                        return@post
                     }
-                    val move=plan.moves.first()
-                    val piece=pieces[move.pieceIndex]
-                    val observed=frame.pieces[move.pieceIndex]!!
-                    val screen=Point()
-                    @Suppress("DEPRECATION")
-                    wm!!.defaultDisplay.getRealSize(screen)
-                    val scaleX=screen.x/BoardRecognizer.REF_WIDTH
-                    val scaleY=screen.y/BoardRecognizer.REF_HEIGHT
-                    // Game preview appears about 95 reference pixels above finger position.
-                    // This is an experimental offset and must be calibrated on device.
-                    val fromX=observed.centerX*scaleX
-                    val fromY=observed.centerY*scaleY
-                    val targetX=(163f+move.col*55f+(piece.width-1)*27.5f)*scaleX
-                    val targetY=(454f+move.row*55f+(piece.height-1)*27.5f+95f)*scaleY
-                    val expected=Solver.placeAndClear(frame.board,piece,move.row,move.col)
-                    setStatus("Testing piece ${move.pieceIndex+1} to row ${move.row+1}, col ${move.col+1}. One drag only...")
-                    val accepted=TouchService.current?.dragWithHold(fromX,fromY,targetX,targetY) { success, detail ->
-                        handler.post {
-                            lastGestureOutcome = detail
-                            if (!success) { finish("Gesture failed: $detail. No further moves."); return@post }
-                            handler.postDelayed({
-                                val actual=latest
-                                val verified=actual!=null && SystemClock.elapsedRealtime()-latestAt<3000 && actual.board==expected
-                                finish(if (verified) "Board matches predicted result after one drag. STOP and inspect the game." else
-                                    "Drag finished, but board did NOT match prediction. STOP and inspect the game. No retry.")
-                            },1700)
-                        }
-                    } ?: false
-                    if (!accepted) {
-                        lastGestureOutcome = "Android rejected initial drag dispatch"
-                        finish("Accessibility service rejected gesture. No move made.")
-                    }
+                    val move = plan.moves.first()
+                    val piece = pieces[move.pieceIndex]
+                    prepared = Prepared(frame,move,piece,frame.pieces[move.pieceIndex]!!,
+                        Solver.placeAndClear(frame.board,piece,move.row,move.col),
+                        SystemClock.elapsedRealtime())
+                    updateMarker()
+                    moveButton?.isEnabled = true
+                    setStatus("PREVIEW only: piece ${move.pieceIndex+1}, row ${move.row+1}, col ${move.col+1}. " +
+                        "Green = planned cells; red = touch endpoint. Adjust X/Y or press MOVE 1 once.")
                 }
-            } catch (e: Exception) { handler.post { finish("Solver error: ${e.message}. No further moves.") } }
+            } catch (e: Exception) {
+                handler.post {
+                    preparing = false
+                    previewButton?.isEnabled = true
+                    setStatus("Preview solver error: ${e.message}")
+                }
+            }
         }
     }
+
+    private fun attemptOneMove() {
+        if (inProgress || moveAttempted) return
+        val plan = prepared ?: run { setStatus("Tap PREVIEW first."); return }
+        if (TouchService.current == null) {
+            setStatus("Enable the accessibility service before MOVE 1."); return
+        }
+        if (SystemClock.elapsedRealtime()-plan.time > 30000L) {
+            prepared = null; moveButton?.isEnabled = false; removeMarker()
+            setStatus("Preview expired after 30 seconds. Tap PREVIEW again.")
+            return
+        }
+        val coords = gestureCoords(plan)
+        val screen = screenSize()
+        if (coords[0] !in 0f..screen.x.toFloat() || coords[1] !in 0f..screen.y.toFloat() ||
+            coords[2] !in 0f..screen.x.toFloat() || coords[3] !in 0f..screen.y.toFloat()) {
+            setStatus("Drag would leave the screen. Adjust X/Y first."); return
+        }
+        inProgress = true
+        moveAttempted = true
+        moveButton?.isEnabled = false
+        previewButton?.isEnabled = false
+        removeMarker()
+        prepared = null
+        lastGestureOutcome = "Waiting for Android gesture result"
+        setStatus("Testing piece ${plan.move.pieceIndex+1} at row ${plan.move.row+1}, " +
+            "col ${plan.move.col+1}; endpoint (${coords[2].toInt()}, ${coords[3].toInt()}).")
+        val accepted = TouchService.current?.dragWithHold(coords[0],coords[1],coords[2],coords[3]) { success,detail ->
+            handler.post {
+                if (stopped) return@post
+                lastGestureOutcome = detail
+                if (!success) { finish("Gesture failed: $detail. No further moves."); return@post }
+                handler.postDelayed({
+                    if (stopped) return@postDelayed
+                    val actual = latest
+                    val verified = actual != null &&
+                        SystemClock.elapsedRealtime()-latestAt < 3000L && actual.board == plan.expected
+                    finish(if (verified) "Board matched predicted placement. Stop and inspect the game." else
+                        "Gesture completed but board did NOT match. Stop and inspect; no retry.")
+                },1700)
+            }
+        } ?: false
+        if (!accepted) {
+            lastGestureOutcome = "Android rejected gesture dispatch"
+            finish("Accessibility service rejected gesture. No move made.")
+        }
+    }
+
     private fun finish(message: String) {
         inProgress=false
         // Deliberately keep MOVE 1 disabled after the first attempt. No retries.
@@ -196,8 +330,9 @@ class CaptureService : Service() {
     }
     override fun onDestroy() {
         stopped=true
+        removeMarker()
         try { overlay?.let { wm?.removeView(it) } } catch (_: Exception) {}
-        overlay=null; moveButton=null
+        overlay=null; moveButton=null; previewButton=null; offsetLabel=null; prepared=null
         reader?.setOnImageAvailableListener(null,null)
         display?.release(); display=null
         reader?.close(); reader=null
